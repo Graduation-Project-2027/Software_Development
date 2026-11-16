@@ -1077,6 +1077,11 @@ void handleTimeout(void) {
       if (CAN_EstopActive()) {                                          // E-stop: zero target in the active mode (active braking in SPD_MODE)
         input1[inIdx].cmd  = 0;
         input2[inIdx].cmd  = 0;
+        #if CONTROL_CAN == 0
+          if (!timeoutFlgADC && !timeoutFlgGen) {
+            ctrlModReq = ctrlModReqRaw;                                 // Keep braking when the command frames have stopped as well (host crashed:
+          }                                                             // the body controller sends the e-stop). OPEN_MODE would let the wheels coast.
+        #endif
       }
     #endif
 
@@ -1594,12 +1599,27 @@ void poweroff(void) {
   }
   saveConfig();
   HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, GPIO_PIN_RESET);
+  #ifdef POWER_SWITCH_EXTERNAL
+  // The external contact keeps the board powered. Stay here with the motors disabled (enable = 0) until the
+  // power is cycled, and keep reporting on CAN so the host sees why (battery low / temperature, motors disabled).
+  buzzerFreq = 0;
+  while(1) {
+    HAL_Delay(DELAY_IN_MAIN_LOOP);
+    main_loop_counter++;
+    #if defined(FEEDBACK_CAN)
+      CAN_FeedbackTask();
+    #endif
+  }
+  #else
   while(1) {}
+  #endif
 }
 
 
 void poweroffPressCheck(void) {
-  #if !defined(VARIANT_HOVERBOARD) && !defined(VARIANT_TRANSPOTTER)
+  #if defined(POWER_SWITCH_EXTERNAL)
+    // The "button" input is a maintained contact (always read as pressed): nothing to check
+  #elif !defined(VARIANT_HOVERBOARD) && !defined(VARIANT_TRANSPOTTER)
     if(HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {
       uint16_t cnt_press = 0;
       while(HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {

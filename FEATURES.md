@@ -42,9 +42,11 @@ How to use each feature step by step: [USER_GUIDE.md](USER_GUIDE.md).
 
 - **Bespoke design system**, not a template: documented in `gui/DESIGN.md` (art direction, tokens,
   components) and `gui/PRODUCT.md` (audience, jobs, principles).
-- **Industrial, calm palette**: near-black ink on warm neutrals, one signal red (`#FF1929`, from
-  the E-JUST emblem) reserved for the robot, recording and danger, and one amber for lanes and the
-  dock. No purple/blue SaaS gradients, glows or decorative cards.
+- **Machine-controller look**: a graphite frame around a white floor plan, aluminium side panels,
+  and colour used as the safety code (red stop or fault, amber caution, green running).
+- **The robot's stack light on screen**: three lamps in the top bar, lit by the same rules as the
+  firmware, and an e-stop drawn red on yellow like the real button.
+- **Status strip** along the bottom: link, stack, e-stop chain, drive power, battery, lift, pose.
 - **Typography**: Archivo for interface text with tabular figures for every number (positions,
   headings, speeds), so live values never jitter. Monospace only for topics and commands.
 - **E-JUST emblem** cropped from the official high-resolution logo, drawn at its true aspect ratio
@@ -335,7 +337,13 @@ browser.
 
 - **CAN bridge**: per-wheel rpm commands, hall-tick odometry, battery/temperature/status, e-stop
   controller (STM32F411) that switches the hoverboard's power relay; custom messages
-  `HoverboardStatus` and `SafetyStatus`.
+  `HoverboardStatus`, `SafetyStatus`, `LiftStatus` and `Indicator`.
+- **Lift**: two motors with encoders on the body controller, homed on limit switches and kept
+  level against each other. Missions wait for the measured height.
+- **Stack light and buzzer** that follow the mission state, with the e-stop shown by the
+  controller even when the Pi is down.
+- The mission manager follows the hardware e-stop (`/estop/status`): a pressed button stops the
+  mission and shows its cause in the GUI, next to the battery level and the lift height.
 - MPU9250 IMU driver with a Madgwick filter.
 - Two RPLidar A1M8 scanners (front and rear).
 - Teleoperation TUI (`rich_teleop_tui`) for driving from a terminal.
@@ -349,6 +357,7 @@ browser.
   braking, 50 Hz odometry and motion frames, 10 Hz status with battery, temperature, errors and a
   heartbeat.
 - Register-level bxCAN driver with automatic bus-off recovery and a clock-tolerant bit timing.
+- `POWER_SWITCH_EXTERNAL`: the board's power follows the e-stop relay on its power-button connector.
 - Machine-readable **DBC file** for every frame, verified with `cantools`.
 - **Hoverboard Firmware Tool**: a desktop GUI to choose the variant, edit `config.h` safely, build,
   upload over ST-Link, erase/unlock and open a serial monitor.

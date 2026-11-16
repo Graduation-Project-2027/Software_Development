@@ -13,6 +13,7 @@ motor-controller firmware and the Raspberry Pi ROS 2 robot framework with its we
 | [RaspberryPi_ROS2/README.md](RaspberryPi_ROS2/README.md) | Robot software: packages, launch files, architecture |
 | [RaspberryPi_ROS2/docs/fleet.md](RaspberryPi_ROS2/docs/fleet.md) | Fleet management: several robots from one laptop, traffic rules, Pi setup over SSH |
 | [Hoverboard_Firmware/README.md](Hoverboard_Firmware/README.md) | Motor controller firmware and CAN protocol |
+| [ELECTRICAL.md](ELECTRICAL.md) | Wiring: power, CAN, e-stop chain, lift, lights, and the pinout of every controller |
 
 ## Mission control at a glance
 
@@ -62,7 +63,7 @@ Build and upload using the PlatformIO extension or CLI from the firmware directo
 
 ### E-stop controller (Blackpill)
 
-[`STM32_CANbus_Embedded/Blackpill_CAN_Software/`](STM32_CANbus_Embedded/Blackpill_CAN_Software/README.md) is the firmware of the BODY node: a WeAct Blackpill (STM32F411CEU6) with an MCP2515 CAN controller. It is the robot's e-stop authority. It switches the relay that powers the hoverboard board, reads the e-stop button, trips when the Pi stops sending commands, and reports `SAFETY_STATUS` on the bus. **Blackpill Tool.bat** builds it, uploads over SWD (ST-Link) or USB DFU, and has a serial terminal with a live status panel.
+[`STM32_CANbus_Embedded/Blackpill_CAN_Software/`](STM32_CANbus_Embedded/Blackpill_CAN_Software/README.md) is the firmware of the BODY node: a WeAct Blackpill (STM32F411CEU6) with an MCP2515 CAN controller. It is the robot's e-stop authority: it switches the relay that powers the hoverboard board, reads the e-stop button, trips when the Pi stops sending commands, and reports `SAFETY_STATUS` on the bus. It also runs the lift (two motors with encoders, homed on limit switches), the stack light and the buzzer. **Blackpill Tool.bat** builds it, uploads over SWD (ST-Link) or USB DFU, and has a serial terminal with a live status panel.
 
 ### Raspberry Pi ROS 2 framework
 
@@ -97,7 +98,7 @@ cd src/amr_mission_control/gui && npm run dev -- --host
 
 ## Software relationship
 
-The ROS 2 framework provides the robot-level navigation and mission-control software. The hoverboard firmware provides low-level motor control and describes its CAN interface in the DBC file. The `amr_hardware/can_bridge` node implements that protocol on the Raspberry Pi. The robot is a differential drive: one mainboard (CAN node 1) drives the two hub motors on the centre axle, and four casters sit at the corners. An STM32F411CEU6 on the same bus is the e-stop controller: it switches the relay that powers the hoverboard board and will later also drive the lift, lights and buzzer. Odometry, telemetry and the e-stop state are published as ROS topics. The bridge has not yet been validated on the assembled robot; follow the first-drive checklist in [docs/hardware.md](RaspberryPi_ROS2/docs/hardware.md).
+The ROS 2 framework provides the robot-level navigation and mission-control software. The hoverboard firmware provides low-level motor control and describes its CAN interface in the DBC file. The `amr_hardware/can_bridge` node implements that protocol on the Raspberry Pi. The robot is a differential drive: one mainboard (CAN node 1) drives the two hub motors on the centre axle, and four casters sit at the corners. An STM32F411CEU6 on the same bus is the e-stop controller: it switches the relay that powers the hoverboard board, and it drives the lift, the stack light and the buzzer. Odometry, telemetry and the e-stop state are published as ROS topics. The bridge has not yet been validated on the assembled robot; follow the first-drive checklist in [docs/hardware.md](RaspberryPi_ROS2/docs/hardware.md).
 
 ## Requirements at a glance
 

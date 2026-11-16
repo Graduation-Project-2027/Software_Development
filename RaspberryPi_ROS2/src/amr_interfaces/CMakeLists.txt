@@ -7,6 +7,8 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/HoverboardStatus.msg"
+  "msg/Indicator.msg"
+  "msg/LiftStatus.msg"
   "msg/SafetyStatus.msg"
   DEPENDENCIES std_msgs
 )

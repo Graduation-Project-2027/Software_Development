@@ -414,8 +414,17 @@ void MX_GPIO_Init(void) {
   GPIO_InitStruct.Pin = BUZZER_PIN;
   HAL_GPIO_Init(BUZZER_PORT, &GPIO_InitStruct);
 
+  #ifdef POWER_SWITCH_EXTERNAL
+  // Latch output left floating: driven low it would load the enable line (2k2) and starve the supply
+  // transistor while the external contact is closed; driven high it would keep the board on after it opens.
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pin = OFF_PIN;
   HAL_GPIO_Init(OFF_PORT, &GPIO_InitStruct);
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  #else
+  GPIO_InitStruct.Pin = OFF_PIN;
+  HAL_GPIO_Init(OFF_PORT, &GPIO_InitStruct);
+  #endif
 
 
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;

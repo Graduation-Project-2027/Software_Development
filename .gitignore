@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# PlatformIO
+.pio/
+
+# Host test binaries
+*_test
+*_test.exe
+
+# Editors
+.vscode/
+.idea/

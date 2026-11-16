@@ -2,8 +2,9 @@
  * AMR body controller (BODY node) - STM32F411CEU6 Blackpill + MCP2515.
  *
  * E-stop authority on the robot CAN bus: switches the relay that powers the hoverboard board, reads
- * the e-stop button, watches the Pi (HB_CMD) and reports SAFETY_STATUS (0x011). Behaviour and
- * protocol: RaspberryPi_ROS2/docs/hardware.md and Hoverboard_Firmware/docs/hoverboard_can.dbc.
+ * the e-stop button, watches the Pi (HB_CMD) and reports SAFETY_STATUS (0x011). It also drives the
+ * stack light and the buzzer (BODY_CMD 0x020). Behaviour and protocol: RaspberryPi_ROS2/docs/hardware.md
+ * and Hoverboard_Firmware/docs/hoverboard_can.dbc. Wiring: ELECTRICAL.md.
  */
 #include <Arduino.h>
 #include <IWatchdog.h>
@@ -12,6 +13,7 @@
 #include "app.h"
 #include "config.h"
 #include "console.h"
+#include "lift_hw.h"
 #include "protocol.h"
 
 static_assert(MCP2515_CRYSTAL_HZ / (2 * CAN_BITRATE) >= 8,
@@ -23,6 +25,7 @@ Safety safety({
     HOST_TIMEOUT_MS, BUTTON_DEBOUNCE_MS, BRAKE_STOP_RPM, BRAKE_STOP_HOLD_MS, BRAKE_TIMEOUT_MS, MOTION_TIMEOUT_MS,
     HB_STATUS_TIMEOUT_MS, ESTOP_RESEND_MS, WATCHDOG_ARM_ON_BOOT != 0, BOOT_LATCHED != 0,
 });
+Indicator indicator({INDICATOR_TIMEOUT_MS, ESTOP_BEEPS, ESTOP_BEEP_MS});
 Stats stats;
 }  // namespace app
 
@@ -33,12 +36,30 @@ MCP2515::Result lastInit_ = MCP2515::OK;
 uint32_t lastCanTry_ = 0, lastStatus_ = 0, lastHealth_ = 0;
 uint8_t heartbeat_ = 0, lastEflg_ = 0;
 bool statusDue_ = true;
+uint32_t lastLiftStatus_ = 0;
+uint8_t liftHeartbeat_ = 0, lastLiftState_ = 0xFF;
 
 bool readButton() { return digitalRead(PIN_ESTOP_BUTTON) == BUTTON_PRESSED_LEVEL; }
 
 void writeRelay(bool closed) { digitalWrite(PIN_RELAY, closed == (RELAY_ACTIVE_HIGH != 0) ? HIGH : LOW); }
 
 void writeLed(bool on) { digitalWrite(PIN_LED, on != (LED_ACTIVE_LOW != 0) ? HIGH : LOW); }
+
+void writeOutput(uint32_t pin, bool on) { digitalWrite(pin, on == (OUTPUT_ACTIVE_HIGH != 0) ? HIGH : LOW); }
+
+const uint32_t OUTPUT_PINS[] = {PIN_LIGHT_RED, PIN_LIGHT_AMBER, PIN_LIGHT_GREEN, PIN_BUZZER};
+bool wasActive_ = false;
+
+void updateIndicator(uint32_t now) {
+    const bool active = app::safety.active();
+    if (active && !wasActive_) app::indicator.onEstopTrip(now);
+    wasActive_ = active;
+    const Indicator::Outputs o = app::indicator.update(now, active);
+    writeOutput(PIN_LIGHT_RED, o.red);
+    writeOutput(PIN_LIGHT_AMBER, o.amber);
+    writeOutput(PIN_LIGHT_GREEN, o.green);
+    writeOutput(PIN_BUZZER, o.buzzer);
+}
 
 const char *initError(MCP2515::Result r) {
     switch (r) {
@@ -79,6 +100,12 @@ void dispatch(const CanFrame &f, uint32_t now) {
     const uint32_t id = f.id;
     if (id == proto::ID_ESTOP) {
         if (f.len >= 1) app::safety.onEstopFrame(f.data[0] & 0x01, now);
+    } else if (id == proto::ID_BODY_CMD) {
+        if (f.len >= 2) app::indicator.onHostFrame(f.data[0], f.data[1], now);
+    } else if (id == proto::ID_LIFT_CMD) {
+        if (f.len >= 1 && f.data[0] == proto::LIFT_HOME) liftHw::home();
+        else if (f.len >= 1 && f.data[0] == proto::LIFT_STOP) liftHw::stop();
+        else if (f.len >= 3 && f.data[0] == proto::LIFT_GOTO) liftHw::goToTenthMm((uint16_t)(f.data[1] | (f.data[2] << 8)));
     } else if (id == proto::ID_HB_CMD_BASE + HOVERBOARD_NODE_ID) {
         app::safety.onHostCommand(now);
     } else if (id == proto::ID_HB_MOTION_BASE + HOVERBOARD_NODE_ID) {
@@ -136,6 +163,29 @@ void sendPending(uint32_t now) {
             heartbeat_++;
             lastStatus_ = now;
             statusDue_ = false;
+        }
+    }
+
+    Lift &lift = liftHw::controller();
+    if (lift.state() != lastLiftState_ || now - lastLiftStatus_ >= LIFT_STATUS_PERIOD_MS) {
+        const liftHw::Raw &raw = liftHw::raw();
+        const int16_t pos = liftHw::positionTenthMm(), skew = liftHw::skewTenthMm();
+        CanFrame f;
+        f.id = proto::ID_LIFT_STATUS;
+        f.len = 8;
+        f.data[0] = lift.state();
+        f.data[1] = (lift.homed() ? proto::LIFT_FLAG_HOMED : 0) | (lift.atTarget() ? proto::LIFT_FLAG_AT_TARGET : 0) |
+                    (raw.limitA ? proto::LIFT_FLAG_LIMIT_A : 0) | (raw.limitB ? proto::LIFT_FLAG_LIMIT_B : 0);
+        f.data[2] = (uint8_t)pos;
+        f.data[3] = (uint8_t)(pos >> 8);
+        f.data[4] = (uint8_t)skew;
+        f.data[5] = (uint8_t)(skew >> 8);
+        f.data[6] = lift.fault();
+        f.data[7] = liftHeartbeat_;
+        if (app::sendFrame(f)) {
+            liftHeartbeat_++;
+            lastLiftStatus_ = now;
+            lastLiftState_ = lift.state();
         }
     }
 }
@@ -214,7 +264,12 @@ void setup() {
     pinMode(PIN_ESTOP_BUTTON, INPUT_PULLUP);
     pinMode(PIN_LED, OUTPUT);
     writeLed(false);
+    for (uint32_t pin : OUTPUT_PINS) {
+        pinMode(pin, OUTPUT);
+        writeOutput(pin, false);
+    }
 
+    liftHw::begin();
     console::begin();
     const bool watchdogReset = IWatchdog.isReset(true);
     delay(5);   // button pull-up settles
@@ -222,6 +277,7 @@ void setup() {
     app::safety.setEventHandler(console::event);
     app::safety.begin(millis(), readButton());
     writeRelay(app::safety.relayClosed());
+    wasActive_ = app::safety.active();   // no trip beeps for a state that was latched at start-up
 
     SPI.begin();
     initCan();
@@ -243,7 +299,9 @@ void loop() {
 
     app::safety.update(now, readButton());
     writeRelay(app::safety.relayClosed());
+    liftHw::update(now, app::safety.active());
     sendPending(now);
+    updateIndicator(now);
     updateLed(now);
     console::poll(now);
 }

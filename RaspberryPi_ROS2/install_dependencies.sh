@@ -110,7 +110,7 @@ if ! $SIM; then
         sudo usermod -aG i2c "${USER}"
     fi
     echo "  ✓ Done — log out and back in for the group change to apply"
-    echo "    CAN interface setup (can0) is described in docs/hardware.md"
+    echo "    Next, once: sudo bash scripts/setup_pi_hardware.sh   (CAN, SPI, I2C; see docs/hardware.md)"
 fi
 
 # ── 5. Clean stale build artifacts ───────────────────────────────────

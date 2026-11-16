@@ -20,7 +20,7 @@
 | `mpu9250`: *Cannot talk to the MPU9250* | Wiring, I2C disabled, user not in `i2c`, or address 0x69 (AD0 high): `sudo i2cdetect -y 1`. |
 | Heading drifts | Recalibrate the gyro with the robot still (`/imu/calibrate_gyro`). Do not enable `use_mag` without a hard-iron calibration. |
 | RViz on the laptop shows nothing | Same `ROS_DOMAIN_ID` on both machines, multicast allowed on the network, and no `use_sim_time` on the laptop. |
-| Lift links shown without transform in RViz | Expected until the lift controller publishes `lift_joint` ([hardware.md](hardware.md#5-lift-lights-and-buzzer-planned)). |
+| Lift links shown without transform in RViz | The body controller is not reporting: check `ros2 topic echo /lift/status` ([hardware.md](hardware.md#5-lift-lights-and-buzzer)). |
 
 ## Simulation
 

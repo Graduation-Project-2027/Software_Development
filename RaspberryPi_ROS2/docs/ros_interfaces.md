@@ -34,7 +34,7 @@ map ──(slam_toolbox)──> odom ──(EKF)──> base_footprint ──> b
 | `/hoverboard/status` | `amr_interfaces/HoverboardStatus` | `can_bridge` (real only) | monitoring (`ros2 topic echo`) |
 | `/estop/status` | `amr_interfaces/SafetyStatus` | `can_bridge` (real only) | monitoring |
 | `/cmd_vel` | `geometry_msgs/Twist` (`linear.x`, `angular.z`) | Nav2 collision monitor, mission manager, TUI | `can_bridge` / Gazebo |
-| `/lift_joint/cmd_pos` | `std_msgs/Float64` | mission manager, TUI | Gazebo lift controller (real: planned) |
+| `/lift_joint/cmd_pos` | `std_msgs/Float64` | mission manager, TUI | Gazebo lift controller; CAN bridge on the real robot |
 | `/clock` | `rosgraph_msgs/Clock` | Gazebo (sim only) | all nodes when `sim:=true` |
 
 ### State estimation and scan pipeline

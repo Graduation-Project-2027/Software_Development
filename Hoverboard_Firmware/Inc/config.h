@@ -353,12 +353,17 @@
  *   Same sign convention as commands. INVERT_L/R_DIRECTION flip a wheel and its feedback together.
  * - No valid command for CAN_TIMEOUT: motors are brought to 0 (3 low-pitch beeps). E-STOP frame: active braking to 0 rpm, latched.
  * - The board does not power off due to inactivity while CAN commands are being received.
+ * - POWER_SWITCH_EXTERNAL: the board's power follows a maintained contact on the ON SWITCH (power button) connector:
+ *   the e-stop relay of the AMR body controller. See ELECTRICAL.md (repository root).
 */
   #define MOTOR_LEFT_ENA                  // differential drive needs both motors
   #undef  CTRL_MOD_REQ
   #define CTRL_MOD_REQ          SPD_MODE  // SPD_MODE: commands in rpm. VLT_MODE / TRQ_MODE: commands normalized [-1000, 1000]
   #define FILTER                65535     // ~1.0f: low-pass filter bypassed, the speed controller and the host already smooth the command
   #define FEEDBACK_CAN                    // send telemetry frames on CAN
+  #define POWER_SWITCH_EXTERNAL           // power follows a maintained contact (e-stop relay / toggle switch) on the ON SWITCH connector instead of the push button:
+                                          // the firmware never holds the power latch, ignores the "button" (it reads as pressed all the time) and never powers itself off.
+                                          // Comment this out to keep the original push-button behaviour.
 
   // #define DUAL_INPUTS                     // ADC*(Primary) + CAN(Auxiliary). Uncomment this to use Dual-inputs: pots on left cable, CAN takes over while commands are received
   #ifdef DUAL_INPUTS
@@ -785,6 +790,10 @@
   #if CAN_NODE_ID < 1 || CAN_NODE_ID > 127
     #error CAN_NODE_ID must be in the range 1..127.
   #endif
+#endif
+
+#if defined(POWER_SWITCH_EXTERNAL) && (defined(VARIANT_HOVERBOARD) || defined(VARIANT_TRANSPOTTER) || defined(MULTI_MODE_DRIVE))
+  #error POWER_SWITCH_EXTERNAL is not supported with VARIANT_HOVERBOARD, VARIANT_TRANSPOTTER or MULTI_MODE_DRIVE (they need the power button).
 #endif
 
 #if defined(CONTROL_CAN) && (defined(CONTROL_SERIAL_USART2) || defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART2) || defined(SIDEBOARD_SERIAL_USART3))

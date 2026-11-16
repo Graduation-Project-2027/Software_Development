@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "MCP2515.h"
+#include "indicator.h"
 #include "safety.h"
 
 struct Stats {
@@ -13,6 +14,7 @@ struct Stats {
 namespace app {
 extern MCP2515 can;
 extern Safety safety;
+extern Indicator indicator;
 extern Stats stats;
 
 bool canReady();

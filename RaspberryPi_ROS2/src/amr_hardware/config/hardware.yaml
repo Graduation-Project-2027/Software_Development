@@ -49,7 +49,7 @@ imu_filter:
     mag_bias_y: 0.0
     mag_bias_z: 0.0
 
-# ── CAN bridge: hoverboard drive board + STM32F411 e-stop controller ───
+# ── CAN bridge: hoverboard drive board + STM32F411 body controller (e-stop, lights, buzzer) ───
 can_bridge:
   ros__parameters:
     can_interface: can0
@@ -60,6 +60,11 @@ can_bridge:
     max_wheel_rpm: 150.0           # software limit (~1.3 m/s), well below the firmware N_MOT_MAX (1000)
     cmd_vel_timeout: 0.5           # [s] without cmd_vel -> wheels commanded to 0 rpm
     status_timeout: 0.5            # [s] without a status frame -> board reported offline
+    feedback_timeout: 0.25         # [s] without odometry/motion frames -> twist 0, odometry re-baselined
+    indicator_timeout: 1.0         # [s] without an /indicator message -> stack light back to idle
+    travel_buzzer: false           # true: one short beep per second whenever the wheels are commanded
+    release_host_timeout_on_start: true   # clear the controller's host-watchdog latch when the stack starts
+                                          # (a pressed button or a requested e-stop always stays latched)
     rate: 50.0                     # [Hz] wheel commands + odometry
     status_rate: 10.0              # [Hz] hoverboard/status and estop/status
     odom_frame: odom

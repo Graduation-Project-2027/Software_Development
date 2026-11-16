@@ -3,7 +3,7 @@
 <package format="3">
   <name>amr_interfaces</name>
   <version>0.1.0</version>
-  <description>Custom messages for the AMR hardware layer (hoverboard and e-stop controller telemetry).</description>
+  <description>Custom messages for the AMR hardware layer (hoverboard and e-stop controller telemetry, stack light and buzzer).</description>
   <maintainer email="team@amr.local">AMR Team</maintainer>
   <license>MIT</license>
 

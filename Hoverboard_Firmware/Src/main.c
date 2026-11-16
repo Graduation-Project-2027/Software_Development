@@ -202,7 +202,11 @@ int main(void) {
   MX_ADC2_Init();
   BLDC_Init();        // BLDC Controller Init
 
+  #ifdef POWER_SWITCH_EXTERNAL
+  // Latch never held (OFF_PIN is a floating input, see setup.c): the board switches off as soon as the external contact opens
+  #else
   HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, GPIO_PIN_SET);   // Activate Latch
+  #endif
   Input_Lim_Init();   // Input Limitations Init
   Input_Init();       // Input Init
 
@@ -239,8 +243,10 @@ int main(void) {
     printf("Drive mode %i selected: max_speed:%i acc_rate:%i \r\n", drive_mode, max_speed, rate);
   #endif
 
+  #ifndef POWER_SWITCH_EXTERNAL
   // Loop until button is released
   while(HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) { HAL_Delay(10); }
+  #endif
 
   #ifdef MULTI_MODE_DRIVE
     // Wait until triggers are released. Exit if timeout elapses (to unblock if the inputs are not calibrated)
@@ -608,6 +614,10 @@ int main(void) {
           (abs(rtP_Right.n_cruiseMotTgt) > 50 && rtP_Right.b_cruiseCtrlEna)) {
         inactivity_timeout_counter = 0;
       }
+    #endif
+
+    #ifdef POWER_SWITCH_EXTERNAL
+      inactivity_timeout_counter = 0;     // Power is owned by the external contact: never switch off by inactivity
     #endif
 
     if (inactivity_timeout_counter > (INACTIVITY_TIMEOUT * 60 * 1000) / (DELAY_IN_MAIN_LOOP + 1)) {  // rest of main loop needs maybe 1ms

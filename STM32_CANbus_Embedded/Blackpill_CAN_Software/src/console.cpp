@@ -9,6 +9,7 @@
 #include "app.h"
 #include "bootloader.h"
 #include "config.h"
+#include "lift_hw.h"
 #include "protocol.h"
 
 namespace console {
@@ -102,6 +103,11 @@ void printStatus(uint32_t now) {
               app::can.tec(), app::can.rec());
     else
         reply("CAN        : MCP2515 NOT READY (retrying every %u ms)\r\n", CAN_RETRY_MS);
+    if (app::indicator.hostFresh(now))
+        reply("Indication : %s, buzzer %u (from the Pi)\r\n", proto::indicationName(app::indicator.mode()),
+              app::indicator.buzzer());
+    else
+        reply("Indication : no BODY_CMD from the Pi (green blinks)\r\n");
     reply("Uptime     : %lu s\r\n", (unsigned long)(now / 1000));
 }
 
@@ -142,6 +148,10 @@ void printHelp() {
     reply("  log off|rx|all      trace received (rx) or all CAN frames\r\n");
     reply("  send ID [B0..B7]    send a standard frame, hex: send 010 01\r\n");
     reply("  selftest            MCP2515 loopback test (bus traffic paused for a few ms)\r\n");
+    reply("  lamptest            all lights on for 3 s and one beep (wiring check)\r\n");
+    reply("  lift                lift state, encoder counts, limit switches\r\n");
+    reply("  lift home|stop|up|down|MM   home, stop, or go to a height in mm\r\n");
+    reply("  lift jog DUTY       open-loop nudge for 300 ms, + = up (bring-up: no limits checked)\r\n");
     reply("  stream on|off       machine-readable @S status lines (used by the Blackpill Tool)\r\n");
     reply("  version             firmware and build information\r\n");
     reply("  dfu                 reboot into the USB DFU bootloader\r\n");
@@ -151,6 +161,39 @@ void printHelp() {
 void printVersion() {
     reply("%s %s, built %s %s, CAN %lu bit/s, MCP2515 %lu MHz\r\n", FW_NAME, FW_VERSION, __DATE__, __TIME__,
           (unsigned long)CAN_BITRATE, (unsigned long)(MCP2515_CRYSTAL_HZ / 1000000));
+}
+
+void printLift() {
+    static const char *const STATES[] = {"not homed", "homing", "holding", "moving", "FAULT"};
+    Lift &l = liftHw::controller();
+    const liftHw::Raw &r = liftHw::raw();
+    const int pos = liftHw::positionTenthMm(), skew = liftHw::skewTenthMm();
+    reply("Lift       : %s, fault %u, %d.%d mm of %d mm, left-right %d.%d mm\r\n", STATES[l.state() <= 4 ? l.state() : 4],
+          l.fault(), pos / 10, abs(pos % 10), LIFT_TRAVEL_MM, skew / 10, abs(skew % 10));
+    reply("Counts     : left %ld, right %ld (from home: %ld / %ld, target %ld of %ld)\r\n", (long)r.countsLeft,
+          (long)r.countsRight, (long)l.positionLeft(), (long)l.positionRight(), (long)l.target(), (long)LIFT_TRAVEL_COUNTS);
+    reply("Switches   : A %s, B %s. Duty: left %d, right %d\r\n", r.limitA ? "ACTUATED" : "free",
+          r.limitB ? "ACTUATED" : "free", r.dutyLeft, r.dutyRight);
+}
+
+void cmdLift(char **argv, int argc, uint32_t now) {
+    const char *a = argc > 1 ? argv[1] : "";
+    if (!*a || !strcmp(a, "raw") || !strcmp(a, "status")) printLift();
+    else if (!strcmp(a, "home")) { liftHw::home(); reply("homing\r\n"); }
+    else if (!strcmp(a, "stop")) { liftHw::stop(); reply("stopped\r\n"); }
+    else if (!strcmp(a, "up")) { liftHw::goToTenthMm(LIFT_TRAVEL_MM * 10); reply("going up\r\n"); }
+    else if (!strcmp(a, "down")) { liftHw::goToTenthMm(0); reply("going down\r\n"); }
+    else if (!strcmp(a, "jog")) {
+        const int duty = argc > 2 ? atoi(argv[2]) : 0;
+        if (app::safety.active()) reply("refused: e-stop is latched\r\n");
+        else if (duty == 0) reply("usage: lift jog DUTY   (-1000..1000, + = up, runs 300 ms, no limits checked)\r\n");
+        else { liftHw::jog((int16_t)duty, 300, now); reply("jog %d for 300 ms\r\n", duty); }
+    } else {
+        char *end;
+        const double mm = strtod(a, &end);
+        if (*end || mm < 0 || mm > LIFT_TRAVEL_MM) reply("usage: lift [raw|home|stop|up|down|jog DUTY|MM]   (0..%d mm)\r\n", LIFT_TRAVEL_MM);
+        else { liftHw::goToTenthMm((uint16_t)(mm * 10 + 0.5)); reply("going to %s mm\r\n", a); }
+    }
 }
 
 bool parseHex(const char *s, uint32_t &v) {
@@ -214,6 +257,11 @@ void run(char *cmdline, uint32_t now) {
         char msg[96];
         bool ok = app::canSelfTest(msg, sizeof msg);
         reply("selftest %s: %s\r\n", ok ? "PASSED" : "FAILED", msg);
+    } else if (!strcmp(c, "lift")) {
+        cmdLift(argv, argc, now);
+    } else if (!strcmp(c, "lamptest")) {
+        app::indicator.lampTest(now, 3000);
+        reply("red, amber and green on for 3 s, one beep\r\n");
     } else if (!strcmp(c, "dfu")) {
         reply("Rebooting into the DFU bootloader...\r\n");
         rebootToDfu();
@@ -227,14 +275,15 @@ void run(char *cmdline, uint32_t now) {
 void streamLine(uint32_t now) {
     auto &s = app::safety;
     uint32_t age = s.hostAge(now);
-    char buf[220];
+    char buf[240];
     int n = snprintf(buf, sizeof buf,
                      "@S up=%lu active=%u power=%u button=%u cause=%u armed=%u host_ms=%ld motion=%u rpm_l=%d "
-                     "rpm_r=%d hb=%u hb_estop=%u can=%u tec=%u rec=%u rx=%lu tx=%lu\r\n",
+                     "rpm_r=%d hb=%u hb_estop=%u can=%u tec=%u rec=%u rx=%lu tx=%lu ind=%d\r\n",
                      (unsigned long)now, s.active(), s.relayClosed(), s.buttonPressed(), s.cause(), s.hostArmed(),
                      age == UINT32_MAX ? -1L : (long)age, s.motionFresh(now), s.rpmLeft(), s.rpmRight(),
                      s.hbStatusFresh(now), s.hbEstop(), app::canReady(), app::canReady() ? app::can.tec() : 0,
-                     app::canReady() ? app::can.rec() : 0, (unsigned long)app::stats.rx, (unsigned long)app::stats.tx);
+                     app::canReady() ? app::can.rec() : 0, (unsigned long)app::stats.rx, (unsigned long)app::stats.tx,
+                     app::indicator.hostFresh(now) ? (int)app::indicator.mode() : -1);
     if (n > 0) out(buf, (size_t)n < sizeof buf ? (size_t)n : sizeof buf - 1, 10);
 }
 

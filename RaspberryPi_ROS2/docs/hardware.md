@@ -5,12 +5,15 @@
 | 2x RPLidar A1M8 (front, rear) | USB serial, 115200 baud | `rplidar_ros/rplidar_node` (`/front_lidar/rplidar`, `/rear_lidar/rplidar`) | `/scan`, `/scan_rear` |
 | MPU9250 (+ AK8963 compass) | Pi I2C bus 1, address 0x68 | `amr_hardware/mpu9250_driver` + `imu_filter_madgwick` | `/imu/data_raw`, `/imu/mag`, `/imu/temperature` → `/imu/data` |
 | 1x hoverboard mainboard: two hub motors on the centre axle (differential drive, 4 corner casters) | CAN, SocketCAN `can0` | `amr_hardware/can_bridge` | `/cmd_vel` in; `/odom`, `/joint_states`, `/hoverboard/status` out |
-| STM32F411CEU6 body controller: e-stop authority, relay feeding the hoverboard board | same CAN bus | `amr_hardware/can_bridge` | `/estop` service, `/estop/status` |
-| Lift, lights, buzzer (planned) | same STM32F411 | to be added to `can_bridge` | `/lift_joint/cmd_pos` (already used by the mission manager and TUI) |
+| STM32F411CEU6 body controller: e-stop authority, relay that switches the hoverboard board on | same CAN bus | `amr_hardware/can_bridge` | `/estop` service, `/estop/status` |
+| Lift (two motors with encoders), stack light, buzzer | same STM32F411 | `amr_hardware/can_bridge` | `/lift_joint/cmd_pos` in, `/lift/status` out, `/lift/home` service; `/indicator` in |
 
 All drivers are started by `amr_bringup/bringup.launch.py` (and therefore by mapping and navigation)
 through `amr_hardware/launch/hardware.launch.py`. Every tunable lives in
 `src/amr_hardware/config/hardware.yaml`.
+
+Wiring, pinouts, the cables between the boxes and the safety chain are in
+[ELECTRICAL.md](../../ELECTRICAL.md). This page covers the software side of the same hardware.
 
 ## 1. Operating system
 
@@ -30,44 +33,33 @@ through `amr_hardware/launch/hardware.launch.py`. Every tunable lives in
 
 ### Interface on the Pi
 
-Any SocketCAN interface works:
+Run the setup script once and reboot:
 
-- **USB adapter** (candleLight / gs_usb firmware): shows up as `can0` with no extra setup.
-- **SPI HAT with an MCP2515/MCP2518FD**: enable its overlay in `/boot/firmware/config.txt`, using
-  the crystal frequency and interrupt GPIO from the HAT's documentation, e.g.
+```bash
+sudo bash scripts/setup_pi_hardware.sh                                        # MCP2515, 16 MHz crystal, 1 Mbit/s
+sudo bash scripts/setup_pi_hardware.sh --oscillator 8000000 --bitrate 500000  # 8 MHz crystal
+sudo bash scripts/setup_pi_hardware.sh --usb                                  # USB adapter (candleLight / gs_usb)
+```
 
-  ```ini
-  dtparam=spi=on
-  dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25
-  ```
+It enables SPI, the `mcp2515-can0` overlay (INT on GPIO25) and I2C in `/boot/firmware/config.txt`,
+raises the USB current limit for the lidars, and installs `can0.service`, which brings `can0` up at
+boot.
+
+The service sets the bit timing explicitly instead of only a bitrate. The hoverboard board runs
+from an internal RC oscillator, and the kernel's default timing (synchronisation jump width of one
+time quantum) does not tolerate its drift. The script uses the same timing the body controller
+computes for the same crystal.
 
 The hoverboard firmware runs at **1 Mbit/s** (`CAN_BITRATE` in `Hoverboard_Firmware/Inc/config.h`).
 An MCP2515 with an 8 MHz crystal cannot reach 1 Mbit/s: use 500 kbit/s on every node instead.
 
-Bring the interface up (test):
-
 ```bash
-sudo ip link set can0 up type can bitrate 1000000 restart-ms 100
-candump can0          # from can-utils
-```
-
-Make it permanent with systemd-networkd, `/etc/systemd/network/80-can0.network`:
-
-```ini
-[Match]
-Name=can0
-
-[CAN]
-BitRate=1M
-RestartSec=100ms
-```
-
-```bash
-sudo systemctl enable --now systemd-networkd
+ip -details link show can0    # state ERROR-ACTIVE and the timing
+candump can0                  # from can-utils
 ```
 
 Wiring: CAN_H/CAN_L twisted pair, shared GND, **120 Ω termination only at the two physical ends**
-of the bus (remove the resistor on middle nodes).
+of the bus, which are the hoverboard PCB and the body controller. The Pi is in the middle.
 
 ### Hoverboard mainboard
 
@@ -84,8 +76,10 @@ Change `board_id` in `hardware.yaml` if you flash another ID. The firmware conve
 `INVERT_L_DIRECTION` / `INVERT_R_DIRECTION` in `config.h` (this flips the command and the feedback
 together). Disable `DEBUG_SERIAL_USART3` in production builds (it adds loop jitter).
 
-The board is powered through the e-stop relay. **Bypass its power latch** (the push-button / latch
-circuit of the original hoverboard) so it boots by itself when the relay closes.
+The e-stop relay takes the place of the board's power button: its contact goes on the ON SWITCH
+connector and switches the board's logic supply, not the battery line. `POWER_SWITCH_EXTERNAL` in
+`config.h` (on by default for `VARIANT_CAN`) makes the firmware follow that contact
+([ELECTRICAL.md](../../ELECTRICAL.md#8-hoverboard-mainboard-and-the-hb-pcb)).
 
 ### E-stop controller (STM32F411CEU6, `BODY` node)
 
@@ -118,7 +112,8 @@ Protocol (from [hoverboard_can.dbc](../../Hoverboard_Firmware/docs/hoverboard_ca
 | 0x280+n | board → Pi | `i16` left/right rpm, `i16` left/right current [A×100] | 50 Hz |
 | 0x380+n | board → Pi | battery V×100, battery %, temperature, error codes, status flags, CAN error counter, heartbeat | 10 Hz |
 
-Lift, lights and buzzer frames for the same node will be added later (see section 5).
+The same node also takes `BODY_CMD` (0x020, stack light and buzzer) and `LIFT_CMD` (0x021), and
+sends `LIFT_STATUS` (0x022). See section 5.
 
 ### What the CAN bridge does
 
@@ -130,7 +125,11 @@ Lift, lights and buzzer frames for the same node will be added later (see sectio
   never resumes an old command.
 - Integrates the hall ticks into `/odom` (pose) and reports the measured wheel rpm as the twist
   (the EKF fuses only the twist). It publishes no TF: the EKF owns `odom → base_footprint`.
-  Tick jumps (board restarted) are dropped and the odometry re-baselined.
+  Tick jumps (board restarted) are dropped and the odometry re-baselined. While the board is
+  silent (power cut by the e-stop) the pose is held and the twist is 0.
+- When the stack starts and the controller is latched only because nobody was sending commands
+  (cause "host timeout"), the bridge releases it (`release_host_timeout_on_start`). A pressed
+  button or a requested e-stop stays latched.
 - Publishes `/joint_states` for `left_wheel_joint` and `right_wheel_joint` so the wheels turn in RViz.
 - Publishes every decoded hoverboard field on `/hoverboard/status`
   (`amr_interfaces/msg/HoverboardStatus`) and the e-stop controller state on `/estop/status`
@@ -138,7 +137,7 @@ Lift, lights and buzzer frames for the same node will be added later (see sectio
   E-stop changes and their cause, an offline board (unless the relay is open), hall/stall errors,
   low battery and over-temperature are also logged.
 - Serves `/estop` (`std_srvs/srv/SetBool`): `true` latches the e-stop on every CAN node, `false`
-  requests the release (refused by the controller while the button is pressed).
+  requests the release (refused while the button is pressed).
 
 ```bash
 ros2 service call /estop std_srvs/srv/SetBool "{data: true}"    # stop everything
@@ -195,19 +194,31 @@ comparing `/odom`: a wrong distance means a wrong radius, a wrong angle means a 
 - Boards that report `WHO_AM_I = 0x70` are MPU6500 clones without a magnetometer: the driver warns
   and runs without `/imu/mag`.
 
-## 5. Lift, lights and buzzer (planned)
+## 5. Lift, lights and buzzer
 
-These will be driven by the same STM32F411CEU6 (`BODY` node) that controls the e-stop. When their
-protocol is defined, add the frames to the DBC and handle them in `can_bridge.py` (one process owns
-the bus):
+The body controller drives all three. Wiring and bring-up: [ELECTRICAL.md](../../ELECTRICAL.md),
+sections 6 and 7.
 
-- subscribe `/lift_joint/cmd_pos` (`std_msgs/Float64`, metres) — the mission manager and the TUI
-  already publish it, and the Gazebo bridge consumes the same topic;
-- publish the measured lift height as `lift_joint` in `/joint_states` (until then RViz shows the
-  lift links without a transform on the real robot);
-- expose lights/buzzer as topics or services.
+**Lift.** The bridge forwards `/lift_joint/cmd_pos` (`std_msgs/Float64`, metres above the home
+position) as `LIFT_CMD` and publishes the controller's `LIFT_STATUS` on `/lift/status`
+(`amr_interfaces/msg/LiftStatus`). The measured height is also published as `lift_joint` in
+`/joint_states`, so the lift moves in RViz. The first command after power-up homes the lift on its
+limit switches before moving.
 
-Until the lift exists, missions run through their lift steps without moving a rack.
+```bash
+ros2 topic pub --once /lift_joint/cmd_pos std_msgs/msg/Float64 "{data: 0.05}"   # up 5 cm
+ros2 topic echo /lift/status --once
+ros2 service call /lift/home std_srvs/srv/Trigger                               # home; also clears a lift fault
+```
+
+During a transport the mission manager waits for the lift to report that it has arrived. A lift
+fault or a timeout (`lift_timeout`) fails the task instead of driving off with a rack half lifted.
+An e-stop drops the lift move, and it does not resume on release.
+
+**Stack light and buzzer.** The mission manager publishes `/indicator`
+(`amr_interfaces/msg/Indicator`). The bridge shows "moving" by itself whenever the wheels are
+commanded and "fault" on a drive or lift fault. `travel_buzzer: true` in `hardware.yaml` adds a
+beep every second while moving. A latched e-stop is shown by the controller without the Pi.
 
 ## 6. First-drive checklist
 

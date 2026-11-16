@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    name: Firmware (build + host tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install platformio
+      - name: Body controller host tests (e-stop, lift, lights)
+        working-directory: STM32_CANbus_Embedded/Blackpill_CAN_Software
+        run: |
+          for t in safety lift indicator; do
+            g++ -std=c++17 -Wall -Wextra -Werror -Iinclude -Isrc test_host/${t}_host_test.cpp src/${t}.cpp -o ${t}_test
+            ./${t}_test
+          done
+      - name: Build body controller
+        working-directory: STM32_CANbus_Embedded/Blackpill_CAN_Software
+        run: pio run -e blackpill
+      - name: Build hoverboard firmware (VARIANT_CAN)
+        working-directory: Hoverboard_Firmware
+        run: pio run -e VARIANT_CAN
+
+  robot:
+    name: Robot software (protocol tests + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest cantools pyflakes
+      - name: CAN protocol, kinematics and odometry tests (checked against the DBC)
+        working-directory: RaspberryPi_ROS2/src/amr_hardware
+        run: python -m pytest test -q
+      - name: Lint
+        run: python -m pyflakes RaspberryPi_ROS2/src/amr_hardware RaspberryPi_ROS2/src/amr_mission_control/amr_mission_control RaspberryPi_ROS2/src/amr_mission_control/*.py RaspberryPi_ROS2/src/amr_mapping RaspberryPi_ROS2/src/amr_navigation RaspberryPi_ROS2/src/amr_bringup RaspberryPi_ROS2/src/amr_description
+      - name: Shell scripts
+        run: bash -n RaspberryPi_ROS2/install_dependencies.sh && bash -n RaspberryPi_ROS2/scripts/setup_pi_hardware.sh
+
+  gui:
+    name: Mission control GUI (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: RaspberryPi_ROS2/src/amr_mission_control/gui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: RaspberryPi_ROS2/src/amr_mission_control/gui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
