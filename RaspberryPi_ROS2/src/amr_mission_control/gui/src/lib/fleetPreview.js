@@ -1000,6 +1000,10 @@ export class FleetConsole {
       starting: false,
       missionState: {
         ...DEFAULT_STATE, ...s,
+        // Simulated body controller and drive board, as in the single-robot preview.
+        safety: { online: true, active: s.state === "ERROR", cause: s.state === "ERROR" ? 1 : 0, button: false, power: s.state !== "ERROR" },
+        battery: { online: s.state !== "ERROR", voltage: 38.6, percent: 64, low: false, error_left: 0, error_right: 0 },
+        lift: { online: true, state: s.state === "LIFTING" || s.state === "DROPPING" ? 3 : 2, fault: 0, homed: true, height: s.carrying ? 0.05 : 0, at_target: true },
         robot_pose: { ...s.robot_pose },
         queue: s.queue.map((t) => ({ ...t })),
         locations: { dock: { ...r.dock }, racks: l.racks, drop_zones: l.drop_zones, lanes: l.lanes },

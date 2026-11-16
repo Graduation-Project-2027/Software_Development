@@ -4,6 +4,7 @@ import { Button, Tip, Sun } from "../ui";
 import { WorkspaceNav } from "../TopBar";
 import { isDriving } from "../../lib/traffic";
 import { cx } from "../../lib/cx";
+import ThemeSwitch from "../ThemeSwitch";
 
 function ManagerStatus({ fleet, onExitPreview }) {
   if (fleet.preview) {
@@ -58,6 +59,7 @@ function FleetTopBar({ fleet, workspace, onWorkspace, consoleLabel, onExitPrevie
       <div className="topbar__status">
         <ManagerStatus fleet={fleet} onExitPreview={onExitPreview} />
       </div>
+      <ThemeSwitch />
 
       <div className="topbar__state fleetcount" aria-live="polite">
         {usable ? (

@@ -52,7 +52,8 @@ mission_manager:
 
     # ── Transport task timing ─────────────────────────────────────────
     lift_height: 0.05         # lift target — matches URDF lift_range (new 5 cm stroke)
-    lift_wait_time: 6.0       # seconds to wait after sending lift command
+    lift_wait_time: 6.0       # seconds to wait after sending lift command (simulation; the real lift reports when it is there)
+    lift_timeout: 40.0        # real lift: longest time to reach a height, homing included
     costmap_settle_time: 1.0  # seconds to wait after carrying mode switch
     drop_wait_time: 5.0       # let the rack fully settle before reversing out
 

@@ -1,0 +1,303 @@
+/* ════════════════════════════════════════════════════════════════════
+   The machine-controller frame. Loaded after app.css and fleet.css.
+
+   A graphite frame (top bar, event console, status strip) around the
+   floor plan, aluminium side panels, and the safety colour code: red is
+   stop or fault, amber is caution, green is running normally. The three
+   lamps in the top bar are the robot's own stack light.
+   See DESIGN.md.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── The frame is dark: re-scope the tokens, every child follows ───── */
+.topbar, .sb, .log {
+  --paper: #181a1e;
+  --ground: #111316;
+  --raised: #22252a;
+  --active: #2a2e34;
+  --line: #2f3339;
+  --rule: #272a30;
+  --control: #474c55;
+  --control-hover: #636975;
+  --ink: #f2f3f5;
+  --ink-2: #d6d9de;
+  --muted: #a3a8b1;
+  --faint: #8b909a;
+  --red-ink: #ff7075;
+  --red-tint: #3b1619;
+  --gold-ink: #f3b461;
+  --gold-tint: #33260f;
+  --gold-line: #5c4420;
+  --ok: #36c97a;
+  color: var(--ink);
+  color-scheme: dark;
+}
+.topbar .pill--btn:hover { background: #45330f; border-color: var(--gold); }
+.topbar ::selection, .sb ::selection, .log ::selection { background: rgba(255, 255, 255, 0.22); color: #fff; }
+
+/* ── Type: Archivo slightly condensed, the way panel legends are set ── */
+body { font-stretch: 96%; }
+.num, time, .telemetry dd, .sb__value, .speed__value { font-stretch: 90%; }
+.wordmark { font-stretch: 125%; }
+
+/* ── Shell: a third row for the status strip ───────────────────────── */
+.app { grid-template-rows: var(--topbar) minmax(0, 1fr) auto; }
+.app[data-layout="wide"] { grid-template-areas: "top top top" "left stage right" "status status status"; }
+.app[data-layout="medium"] { grid-template-areas: "top top" "left stage" "status status"; }
+
+.rail { background: var(--panel); }
+.topbar { border-bottom-color: #000; gap: 14px; }
+.topbar__status { border-left-color: var(--line); }
+
+/* ── Keys: buttons that look pressable, not floating ───────────────── */
+.btn { font-weight: 600; letter-spacing: 0.005em; }
+.btn--secondary, .btn--float { box-shadow: inset 0 -1px 0 rgba(15, 17, 20, 0.1); }
+.btn--primary { box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35); }
+.btn:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+
+/* The e-stop: red actuator on a yellow ground, as on the robot (ISO 13850). */
+.estop {
+  background: var(--red) !important;
+  color: #fff !important;
+  border-radius: var(--r-control) !important;
+  box-shadow: 0 0 0 2px var(--estop-yellow), inset 0 -2px 0 rgba(0, 0, 0, 0.28);
+  margin: 0 4px 0 2px;
+  letter-spacing: 0.02em;
+}
+.estop:hover:not(:disabled) { background: var(--red-press) !important; }
+.estop:active:not(:disabled) { box-shadow: 0 0 0 2px var(--estop-yellow), inset 0 1px 0 rgba(0, 0, 0, 0.3); }
+.estop:disabled { box-shadow: 0 0 0 2px #6b5a12; }
+
+/* ── Stack light ───────────────────────────────────────────────────── */
+.lamps {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  background: #0b0c0e;
+  border: 1px solid #33373e;
+  border-radius: 11px;
+  flex: none;
+}
+.lamp { width: 10px; height: 10px; border-radius: 50%; background: #2b2e34; box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.6); }
+.lamp--red.is-lit { background: var(--lamp-red); }
+.lamp--amber.is-lit { background: var(--lamp-amber); }
+.lamp--green.is-lit { background: var(--lamp-green); }
+.lamp.is-lit { box-shadow: inset 0 -1px 1px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.45); }
+.lamp.is-blink { animation: lamp-blink 1s steps(1, end) infinite; }
+@keyframes lamp-blink { 50% { background: #2b2e34; box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.6); } }
+@media (prefers-reduced-motion: reduce) { .lamp.is-blink { animation: none; } }
+
+.topbar__state { gap: 10px; font-weight: 700; }
+.topbar__state > .dot, .topbar__state > .sun { display: none; }   /* the lamps say it */
+.topbar__state.tone--idle { color: var(--ink-2); }
+
+/* ── Side panels: section titles sit on a rule, readouts on plates ─── */
+.section-head { align-items: center; margin-bottom: 10px; }
+.section-head h2 { flex: none; font-size: 12px; line-height: 16px; font-weight: 700; color: var(--ink-2); }
+.section-head::after { content: ""; order: 1; flex: 1; height: 1px; background: var(--line); }
+.section-head > :not(h2) { order: 2; }
+
+.telemetry { background: var(--paper); border-color: var(--line); }
+.telemetry dt { font-size: 11px; line-height: 14px; font-weight: 600; font-stretch: 88%; letter-spacing: 0.02em; }
+.telemetry dd { font-size: 18px; line-height: 24px; font-weight: 600; }
+.telemetry dd small { font-size: 12px; margin-left: 2px; }
+
+.status { border-bottom-color: var(--line); }
+.status__state { font-weight: 700; letter-spacing: 0; }
+.pad__key { box-shadow: inset 0 -2px 0 rgba(15, 17, 20, 0.12); }
+.pad__key.is-held, .pad__key:active:not(:disabled) { box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.3); }
+.field__label { font-weight: 600; font-size: 12px; font-stretch: 90%; }
+.tabs__list { background: var(--panel); }
+.tabs__trigger[data-state="active"]::after { height: 3px; }
+
+/* ── Event console ─────────────────────────────────────────────────── */
+.log { border-top-color: #000; background: var(--paper); }
+.log__line { font-size: 12.5px; }
+
+/* ── Status strip ──────────────────────────────────────────────────── */
+.sb {
+  grid-area: status;
+  display: flex;
+  align-items: stretch;
+  height: var(--statusbar);
+  background: var(--ground);
+  border-top: 1px solid #000;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.sb::-webkit-scrollbar { display: none; }
+.sb__seg { display: flex; align-items: center; gap: 7px; padding: 0 12px; border-right: 1px solid var(--line); flex: none; }
+.sb__seg--grow { flex: 1; border-right: 0; }
+.sb__label { color: var(--faint); font-weight: 600; font-stretch: 88%; }
+.sb__value { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
+.sb__dim { color: var(--muted); font-weight: 500; }
+/* A small square pilot light in front of the label carries the tone. */
+.sb__seg--ok .sb__label::before, .sb__seg--off .sb__label::before,
+.sb__seg--fault .sb__label::before, .sb__seg--caution .sb__label::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px; background: var(--control);
+}
+.sb__seg--ok .sb__label::before { background: var(--lamp-green); }
+.sb__seg--caution .sb__label::before { background: var(--lamp-amber); }
+.sb__seg--fault .sb__label::before { background: var(--lamp-red); }
+.sb__seg--fault .sb__value { color: var(--red-ink); }
+.sb__seg--caution .sb__value { color: var(--gold-ink); }
+.sb__seg--off .sb__value { color: var(--muted); }
+.sb__clock { display: flex; align-items: center; padding: 0 12px; border-left: 1px solid var(--line); color: var(--ink-2); font-weight: 600; flex: none; }
+
+.cells { display: inline-flex; gap: 1.5px; }
+.cells i { width: 3px; height: 10px; background: var(--control); }
+.cells i.is-lit { background: var(--lamp-green); }
+.cells--low i.is-lit { background: var(--lamp-red); }
+
+/* Phone: the strip stays in reach at the bottom of the screen. */
+.app[data-layout="narrow"] .sb { position: sticky; bottom: 0; z-index: 20; }
+
+/* The e-stop keeps its place whatever else is on the bar. */
+.topbar > .tipwrap:last-of-type, .topbar .estop { flex: none; }
+.topbar__status { min-width: 0; flex-shrink: 1; overflow: hidden; }
+.topbar__controls { flex: none; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Structure: data in aligned rows, state as a coloured tag, tab strips,
+   text keys. This is what separates a control panel from a web form.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Property rows: label left, value right, one rule per row ──────── */
+.kv { display: block; margin: 14px 0 0; border-top: 1px solid var(--line); }
+.kv > div {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  height: 27px; border-bottom: 1px solid var(--rule);
+}
+.kv dt { font-size: 12px; font-weight: 600; font-stretch: 90%; color: var(--muted); flex: none; }
+.kv dd { font-size: 13px; font-weight: 600; font-stretch: 92%; text-align: right; }
+.pifacts .kv { border-top: 0; }
+
+/* ── State tags: a filled block in the safety colour, not a dot ────── */
+.rrow__state {
+  height: 20px; padding: 0 7px; border-radius: var(--r-chip);
+  font-size: 11px; font-weight: 700; font-stretch: 88%; letter-spacing: 0.03em;
+  background: var(--active); color: var(--ink-2);
+}
+.rrow__state.tone--live { background: var(--tag-green); color: var(--tag-green-ink); }
+.rrow__state.tone--caution { background: var(--tag-amber); color: var(--tag-amber-ink); }
+.rrow__state.tone--fault { background: var(--tag-red); color: #fff; }
+.rrow__state.tone--idle { background: transparent; box-shadow: inset 0 0 0 1px var(--control); color: var(--muted); }
+.rrow__state svg { color: inherit; }
+
+/* The state line in a robot panel: a square pilot light, green while it runs. */
+.status__state { font-size: 18px; line-height: 24px; gap: 9px; }
+.status__state > .dot { width: 10px; height: 10px; border-radius: 1px; }
+.status__state > .sun { border-radius: 1px; background: var(--lamp-green); }
+.status__state > .sun::after { display: none; }
+
+/* ── Roster: a list with rules, like a device table ────────────────── */
+.rlist { margin: 0 -16px; border-top: 1px solid var(--line); }
+.rrow { border-radius: 0; border-bottom: 1px solid var(--rule); padding-left: 16px; padding-right: 16px; }
+.rrow.is-selected { background: var(--paper); box-shadow: inset 0 0 0 1px var(--ink); }
+.rrow__title b { font-weight: 700; }
+.rrow__sub { font-stretch: 92%; }
+
+/* ── Tab strip ─────────────────────────────────────────────────────── */
+.tabs__list {
+  gap: 0; padding: 0; height: 36px; align-items: stretch;
+  background: var(--ground); border-bottom: 1px solid var(--line);
+}
+.tabs__trigger {
+  padding: 0 14px; height: auto; font-size: 13px; font-weight: 600; color: var(--muted);
+  border-right: 1px solid var(--line);
+}
+.tabs__trigger[data-state="active"] { background: var(--panel); color: var(--ink); font-weight: 700; }
+.tabs__trigger[data-state="active"]::after { top: 0; bottom: auto; height: 2px; background: var(--ink); }
+.tabs__trigger[data-state="active"]::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--panel);
+}
+.app[data-layout="narrow"] .tabs__trigger[data-state="active"]::after { top: 0; bottom: auto; }
+
+/* ── Keys carry words; icons stay on icon-only keys ────────────────── */
+.rail .btn:has(.btn__label) > svg, .sheet .btn:has(.btn__label) > svg { display: none; }
+.rail .btn { font-stretch: 94%; }
+.btn--danger-quiet { background: transparent; color: var(--red-ink); border-color: var(--red); box-shadow: inset 0 -1px 0 rgba(225, 29, 39, 0.25); }
+.btn--danger-quiet:hover:not(:disabled) { background: var(--red-tint); }
+.btn--ghost { color: var(--muted); }
+
+.rhead__id { font-size: 15px; }
+.scene3d { background: var(--unknown); }
+.scene3d__view .seg { background: var(--paper); }
+
+/* ── Day / night selector ──────────────────────────────────────────── */
+.themesw {
+  position: relative; flex: none;
+  display: inline-grid; grid-template-columns: 1fr 1fr; align-items: center; justify-items: center;
+  width: 50px; height: 24px; padding: 0;
+  background: #0b0c0e; border: 1px solid #3a3e46; border-radius: 3px;
+  color: #6f7580; cursor: pointer;
+}
+.themesw:hover { border-color: #5a606b; }
+.themesw__mark { position: relative; z-index: 1; transition: color 0.16s; }
+.themesw[aria-checked="false"] .themesw__mark--day,
+.themesw[aria-checked="true"] .themesw__mark--night { color: #111316; }
+.themesw__lever {
+  position: absolute; top: 2px; left: 2px; width: 22px; height: 18px; border-radius: 2px;
+  background: linear-gradient(#f4f5f7, #c9cdd3);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: transform 0.18s var(--ease);
+}
+.themesw[aria-checked="true"] .themesw__lever { transform: translateX(22px); }
+@media (prefers-reduced-motion: reduce) { .themesw__lever, .themesw__mark { transition: none; } }
+
+/* ════════════════════════════════════════════════════════════════════
+   Night panel
+   ════════════════════════════════════════════════════════════════════ */
+:root {
+  --tag-green: #c9f1dc; --tag-green-ink: #0c5a33;
+  --tag-amber: #ffe2ad; --tag-amber-ink: #6b4300;
+  --tag-red: #e11d27;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #23262b;
+  --panel: #1a1c20;
+  --ground: #141619;
+  --raised: #2a2d33;
+  --active: #30343a;
+  --line: #34383f;
+  --rule: #2a2d33;
+  --control: #4c515a;
+  --control-hover: #6a707b;
+  --unknown: #101214;
+  --ink: #f0f1f3;
+  --ink-2: #d3d6db;
+  --muted: #a0a5ae;
+  --faint: #878c96;
+  --red: #e5262f;
+  --red-press: #c41a22;
+  --red-ink: #ff7075;
+  --red-tint: #3a1619;
+  --gold-ink: #f3b461;
+  --gold-tint: #33260f;
+  --gold-line: #5c4420;
+  --ok: #36c97a;
+  --tag-green: #12452b; --tag-green-ink: #7fe6ad;
+  --tag-amber: #4a3407; --tag-amber-ink: #ffc864;
+  --shadow-float: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.55);
+  --shadow-chip: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+/* At night the frame goes a step darker than the panels it surrounds. */
+:root[data-theme="dark"] .topbar, :root[data-theme="dark"] .sb, :root[data-theme="dark"] .log {
+  --paper: #0e1012; --ground: #090a0c; --raised: #1a1c20; --active: #22252a; --line: #25282d; --rule: #1c1e22;
+}
+/* The floor plan and the 3D floor are drawings: at night they are shown as a negative. Hue is
+   turned back so red stays red and the lane tape stays gold. */
+:root[data-theme="dark"] .map__canvas,
+:root[data-theme="dark"] .scene3d__canvas canvas {
+  filter: invert(0.9) hue-rotate(180deg) saturate(1.25);
+}
+:root[data-theme="dark"] .btn--secondary, :root[data-theme="dark"] .btn--float { box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.4); }
+:root[data-theme="dark"] .pad__key { box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.45); }
+:root[data-theme="dark"] ::selection { background: rgba(255, 255, 255, 0.24); color: #fff; }
+:root[data-theme="dark"] .pill--btn:hover { background: #45330f; }

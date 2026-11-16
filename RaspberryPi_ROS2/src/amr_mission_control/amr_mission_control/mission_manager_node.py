@@ -12,10 +12,14 @@ Topics Published:
   /lift_joint/cmd_pos        (std_msgs/Float64)           Lift height [m]
   /rack_obstacles            (sensor_msgs/PointCloud2)    Legs of occupied racks (latched)
   /payload/leg_mask          (std_msgs/Float32MultiArray) Carried-rack legs for payload_filter (latched)
+  /indicator                 (amr_interfaces/Indicator)   Stack light + buzzer request (CAN bridge)
 
 Topics Subscribed:
   /mission_control/command   (std_msgs/String)            JSON commands from GUI
   /odometry/filtered         (nav_msgs/Odometry)          Measured velocity (EKF)
+  /estop/status              (amr_interfaces/SafetyStatus)     E-stop controller (real robot)
+  /hoverboard/status         (amr_interfaces/HoverboardStatus) Battery and drive faults (real robot)
+  /lift/status               (amr_interfaces/LiftStatus)       Measured lift height and faults (real robot)
   scan_topics parameter      (sensor_msgs/LaserScan)      Filtered scans for rack-leg detection
 
 Actions Used:
@@ -26,6 +30,7 @@ Actions Used:
 import json
 import os
 import math
+import threading
 import time
 import uuid
 from enum import Enum
@@ -34,12 +39,14 @@ from threading import Lock
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
 import struct
 
-from std_msgs.msg import String, Float64, Header, Float32MultiArray
+from std_msgs.msg import String, Float64, Float32MultiArray
+from amr_interfaces.msg import HoverboardStatus, Indicator, LiftStatus, SafetyStatus
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import LaserScan, PointCloud2, PointField
@@ -105,6 +112,18 @@ class MissionManagerNode(Node):
         self._paused = False
         self._cancel_requested = False
         self._nav_goal_handle = None
+        self._mission_thread = None
+        # E-stop: latched by the GUI or reported by the hardware controller
+        # (/estop/status). While latched nothing may start.
+        self._estop_latched = False
+        self._error_kind = ""          # why the state is ERROR: "estop" | "task"
+        self._safety = None            # last SafetyStatus (real robot only)
+        self._safety_time = 0.0
+        self._board = None             # last HoverboardStatus (real robot only)
+        self._board_time = 0.0
+        self._battery_warned = False
+        self._lift = None              # last LiftStatus (real robot only)
+        self._lift_time = 0.0
 
         # ── Fleet traffic (fleet_server.py on the laptop) ────────────
         # Once a fleet manager sends a heartbeat the robot is "managed":
@@ -193,6 +212,20 @@ class MissionManagerNode(Node):
 
         # ── Teleop publisher (relayed from GUI) ──────────────────────
         self._cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
+
+        # ── Stack light + buzzer (CAN bridge -> body controller) ─────
+        self._indicator_pub = self.create_publisher(Indicator, "/indicator", 10)
+
+        # ── Hardware state from the CAN bridge (absent in simulation) ─
+        self.create_subscription(
+            SafetyStatus, "/estop/status", self._safety_cb, 10,
+            callback_group=self.cb_group)
+        self.create_subscription(
+            HoverboardStatus, "/hoverboard/status", self._board_cb, 10,
+            callback_group=self.cb_group)
+        self.create_subscription(
+            LiftStatus, "/lift/status", self._lift_cb, 10,
+            callback_group=self.cb_group)
 
         # ── Lidar subscriptions (for rack-leg detection) ─────────────
         scan_qos = QoSProfile(
@@ -291,6 +324,8 @@ class MissionManagerNode(Node):
         # commands full travel without overshoot windup.
         self.p_lift_height    = g("lift_height", 0.20).double_value
         self.p_lift_wait      = g("lift_wait_time", 6.0).double_value
+        # Real lift: longest time to reach a height (includes homing on the first move).
+        self.p_lift_timeout   = g("lift_timeout", 40.0).double_value
         self.p_settle_time    = g("costmap_settle_time", 1.0).double_value
         # Let the rack fully lower and settle on the floor before the robot
         # reverses out — otherwise it can drag the rack back with it.
@@ -579,20 +614,35 @@ class MissionManagerNode(Node):
             self._task_queue = [id_map[tid] for tid in order if tid in id_map]
         self._log("Task queue reordered.")
 
+    def _mission_busy(self):
+        """True while a previous run is still winding down (finishing a
+        lift wait, cancelling its Nav2 goal). Two runs must never overlap."""
+        t = self._mission_thread
+        return t is not None and t.is_alive()
+
+    def _start_mission_thread(self):
+        # Execute in a separate thread so the node keeps spinning
+        self._mission_thread = threading.Thread(target=self._execute_queue, daemon=True)
+        self._mission_thread.start()
+
     def _handle_start(self):
+        if self._estop_latched:
+            self._log("Cannot start: the emergency stop is latched. Release it first.")
+            return
         if self._state != MissionState.IDLE:
             self._log("Cannot start: not in IDLE state.")
             return
         if not self._task_queue:
             self._log("Cannot start: task queue is empty.")
             return
+        if self._mission_busy():
+            self._log("Cannot start yet: the previous run is still stopping. Try again in a moment.")
+            return
         self._state = MissionState.RUNNING
         self._cancel_requested = False
         self._paused = False
         self._log("Mission queue started.")
-        # Execute in a separate thread so the node keeps spinning
-        import threading
-        threading.Thread(target=self._execute_queue, daemon=True).start()
+        self._start_mission_thread()
 
     def _handle_pause(self):
         if self._state in (MissionState.RUNNING, MissionState.NAVIGATING,
@@ -606,22 +656,30 @@ class MissionManagerNode(Node):
 
     def _handle_resume(self):
         if self._state == MissionState.PAUSED:
+            if self._mission_busy():
+                self._log("Cannot resume yet: the paused step is still stopping. Try again in a moment.")
+                return
             self._paused = False
             self._state = MissionState.RUNNING
             self._log("Mission resumed.")
-            import threading
-            threading.Thread(target=self._execute_queue, daemon=True).start()
+            self._start_mission_thread()
 
     def _handle_stop(self):
         self._cancel_requested = True
         self._paused = False
         if self._nav_goal_handle is not None:
             self._nav_goal_handle.cancel_goal_async()
-        self._state = MissionState.IDLE
         self._current_task = None
+        if self._estop_latched:
+            self._log("Mission stopped. The emergency stop is still latched.")
+            return
+        self._state = MissionState.IDLE
+        self._error_kind = ""
         self._log("Mission stopped.")
 
-    def _handle_estop(self):
+    def _latch_estop(self, reason):
+        """Stop the mission and hold everything until the e-stop is released."""
+        self._estop_latched = True
         self._cancel_requested = True
         self._paused = False
         # Stop all movement immediately
@@ -629,14 +687,103 @@ class MissionManagerNode(Node):
         if self._nav_goal_handle is not None:
             self._nav_goal_handle.cancel_goal_async()
         self._state = MissionState.ERROR
-        self._log("⚠ EMERGENCY STOP ACTIVATED ⚠")
+        self._error_kind = "estop"
+        self._current_task = None
+        self._log(f"⚠ EMERGENCY STOP ACTIVATED ⚠ ({reason})")
+
+    def _handle_estop(self):
+        self._latch_estop("operator")
         self._call_hardware_estop(True)
 
     def _handle_estop_release(self):
+        if self._error_kind == "task" and not self._estop_latched:
+            # Not an e-stop: a task failed. Acknowledge it.
+            self._clear_error()
+            self._log("Fault cleared.")
+            return
+        hw = self._safety_online()
+        if hw and self._safety.button_pressed:
+            self._log("Release refused: the e-stop button on the robot is pressed. "
+                      "Twist it to release it, then release here.")
+            return
         self._call_hardware_estop(False)
+        self._log("Emergency stop release requested.")
+        if not hw:
+            # Simulation / no controller on the bus: nothing reports back.
+            self._estop_latched = False
+            self._clear_error()
+        # With a controller, the state follows /estop/status (see _safety_cb).
+
+    def _clear_error(self):
         if self._state == MissionState.ERROR:
             self._state = MissionState.IDLE
-        self._log("Emergency stop release requested.")
+        self._error_kind = ""
+
+    def _safety_online(self):
+        return self._safety is not None and time.time() - self._safety_time < 1.5 and self._safety.online
+
+    def _safety_cb(self, msg: SafetyStatus):
+        was_active = self._safety is not None and self._safety.online and self._safety.estop_active
+        self._safety = msg
+        self._safety_time = time.time()
+        if not msg.online:
+            return
+        if msg.estop_active and not was_active and not self._estop_latched:
+            causes = {SafetyStatus.CAUSE_HOST_REQUEST: "requested over CAN",
+                      SafetyStatus.CAUSE_BUTTON: "e-stop button on the robot",
+                      SafetyStatus.CAUSE_HOST_TIMEOUT: "controller lost the robot computer"}
+            self._latch_estop(causes.get(msg.cause, "hardware controller"))
+        elif not msg.estop_active and was_active and self._estop_latched:
+            self._estop_latched = False
+            self._clear_error()
+            self._log("Emergency stop released. Robot is idle.")
+
+    def _lift_cb(self, msg: LiftStatus):
+        self._lift = msg
+        self._lift_time = time.time()
+
+    def _lift_online(self):
+        return self._lift is not None and time.time() - self._lift_time < 1.5 and self._lift.online
+
+    def _move_lift(self, height, fallback_wait):
+        """Command the lift and wait until it is there.
+
+        With the real lift (it reports on /lift/status) this waits for the
+        measured height and fails on a lift fault or a timeout, so the robot
+        never drives off with a rack half lifted. Without one (simulation) it
+        waits fallback_wait seconds, as before.
+        """
+        self._lift_to(height)
+        if not self._lift_online():
+            time.sleep(fallback_wait)
+            return True
+        deadline = time.time() + self.p_lift_timeout
+        time.sleep(0.5)                 # let the controller take the command
+        while time.time() < deadline:
+            if self._cancel_requested:
+                return False
+            lift = self._lift
+            if not self._lift_online():
+                self._log("ERROR: The lift controller stopped reporting.")
+                return False
+            if lift.state == LiftStatus.STATE_FAULT:
+                self._log(f"ERROR: Lift fault (code {lift.fault}). Check the mechanism, then home the lift.")
+                return False
+            if lift.at_target and abs(lift.position - height) < 0.003:
+                return True
+            time.sleep(0.1)
+        self._log(f"ERROR: The lift did not reach {height * 1000:.0f} mm in {self.p_lift_timeout:.0f} s.")
+        return False
+
+    def _board_cb(self, msg: HoverboardStatus):
+        self._board = msg
+        self._board_time = time.time()
+        if msg.online and msg.battery_low and not self._battery_warned:
+            self._battery_warned = True
+            self._log(f"⚠ Battery low ({msg.battery_voltage:.1f} V, {msg.battery_percent} %). "
+                      "Send the robot to its dock and charge it.")
+        elif msg.online and not msg.battery_low and msg.battery_percent > 30:
+            self._battery_warned = False
 
     def _call_hardware_estop(self, active):
         if not self._estop_cli.service_is_ready():
@@ -663,7 +810,7 @@ class MissionManagerNode(Node):
         }
         with self._lock:
             self._task_queue.insert(0, task)
-        self._log(f"Return to dock queued.")
+        self._log("Return to dock queued.")
         if self._state == MissionState.IDLE:
             self._handle_start()
 
@@ -828,11 +975,20 @@ class MissionManagerNode(Node):
         self._apply_params(self._smoother_param_cli, "velocity_smoother", [param])
 
     def _handle_lift(self, cmd):
-        height = float(cmd.get("height", 0.0))
+        # The GUI sends 1.0 for "up": never command past the lift's travel.
+        height = max(0.0, min(self.p_lift_height, float(cmd.get("height", 0.0))))
         msg = Float64()
         msg.data = height
         self._lift_pub.publish(msg)
         self._log(f"Lift commanded to {height:.2f}m")
+        if height <= 0.0 and self._carrying and not self._mission_busy():
+            # A rack left on board by a stopped transport was set down by hand.
+            for task in self._task_queue:
+                if task.get("phase") == "carrying":
+                    task["phase"] = "dropped"
+            self._set_carrying_mode(False)
+            self._log("Rack set down here by hand. Its place is not recorded: "
+                      "mark the rack or zone it stands in as occupied.")
 
     def _handle_navigate_to(self, cmd):
         """Direct click-to-navigate from the map."""
@@ -888,7 +1044,11 @@ class MissionManagerNode(Node):
 
             if not success:
                 self._state = MissionState.ERROR
+                self._error_kind = "task"
                 self._log(f"Task failed: {task.get('to_name', task['id'])}")
+                if self._carrying:
+                    self._log("The rack is still on the robot. Drive it to a free spot "
+                              "and press Lift down.")
                 return
 
         # All tasks done — return to dock
@@ -898,6 +1058,8 @@ class MissionManagerNode(Node):
             self._log("All tasks complete. Returning to dock...")
             self._state = MissionState.RETURNING
             self._go_to_site(dock["x"], dock["y"], dock.get("yaw", 0.0), label="dock")
+            if self._cancel_requested or self._paused:
+                return      # stopped / e-stopped on the way: that handler owns the state
 
         self._state = MissionState.IDLE
         self._log("Mission queue complete. Robot is idle.")
@@ -933,8 +1095,18 @@ class MissionManagerNode(Node):
         pickup_d = self.p_pickup_approach
         carry_d  = self.p_carrying_approach
 
+        # A transport that was paused or stopped after the lift still has the
+        # rack on board: continue with the carry instead of picking up again.
+        resume_carry = task.get("phase") == "carrying" and self._carrying
+        if resume_carry:
+            self._log("Resuming with the rack on board.")
+        elif self._carrying:
+            self._log("ERROR: A rack is still on the robot from a stopped transport. "
+                      "Set it down (Lift down) before picking up another.")
+            return False
+
         # ── Runtime state re-check (queued tasks may have gone stale) ─
-        if src.get("id") and self._get_location_state(src["id"]) == "free":
+        if not resume_carry and src.get("id") and self._get_location_state(src["id"]) == "free":
             self._log(f"ERROR: Source '{src.get('name', src['id'])}' is now "
                       f"FREE — rack already moved. Aborting task.")
             return False
@@ -945,78 +1117,12 @@ class MissionManagerNode(Node):
             return False
 
         # ── Tune inflation for the pickup approach ───────────────────
-        self._set_inflation(self.p_inflation_pickup)
-        time.sleep(self.p_settle_time)
-
-        try:
-            # ── Step 1: Navigate to PICKUP staging (aisle, outside legs) ─
-            # Staging now sits fully outside the rack footprint (≈0.95 m
-            # behind centre) so the robot body doesn't overlap the near
-            # legs — otherwise the planner refuses to approach.  The
-            # leg-servo dock closes the remaining gap.
-            self._current_task_step = "navigating_to_rack"
-            self._state = MissionState.NAVIGATING
-            if src:
-                # Stop treating the rack we're about to drive UNDER as a
-                # lethal obstacle (its legs are still 'occupied').
-                self._docking_target_id = src.get("id")
-                self._publish_rack_obstacles()
-
-                stg_x, stg_y = self._staging_point(
-                    src["x"], src["y"], src_yaw, pickup_d)
-
-                if not self._route_via_lanes(stg_x, stg_y, src_yaw,
-                                             label="to pickup"):
-                    return False
-                if self._cancel_requested or self._paused:
-                    return False
-
-                self._log(f"Navigating to pickup staging for "
-                          f"{task.get('from_name', 'rack')}...")
-                if not self._approach_site(stg_x, stg_y, src_yaw, label="to pickup staging"):
-                    return False
-
-            if self._cancel_requested or self._paused:
-                return False
-
-            # ── Step 1b: Closed-loop leg-servo dock (in + centre + align)
-            if src:
-                self._current_task_step = "centering"
-                if not self._dock_servo(src["x"], src["y"], src_yaw,
-                                        label=task.get("from_name", "rack")):
-                    self._log("ERROR: Docking failed — aborting task to "
-                              "avoid lifting without a rack underneath.")
-                    return False
-
-            # ── Step 2: Lift ─────────────────────────────────────────
-            self._current_task_step = "lifting"
-            self._state = MissionState.LIFTING
-            self._log("Lifting rack...")
-            self._lift_to(self.p_lift_height)
-            time.sleep(self.p_lift_wait)
-
-            # Mark pickup location as FREE — the rack is no longer here.
-            if src and src.get("id"):
-                self._set_location_state(src["id"], "free")
-
-            # Carrying now: legs are lifted out of the lidar plane.  The
-            # carried rack is suppressed by _set_carrying_mode's logic.
-            self._docking_target_id = None
-            self._set_carrying_mode(True)
+        if not resume_carry:
+            self._set_inflation(self.p_inflation_pickup)
             time.sleep(self.p_settle_time)
 
-            # ── Step 2b: Extract straight back into the aisle ────────
-            # Pure straight reverse with lateral + yaw hold, closed-loop
-            # on odom, so the carried rack pulls out without swinging.
-            if src:
-                self._drive_straight_closed_loop(
-                    -self.p_extract_clearance,
-                    label="Extracting rack to aisle")
-                time.sleep(0.3)
-                self._clear_costmaps()
-                time.sleep(0.5)
-
-            if self._cancel_requested or self._paused:
+        try:
+            if not resume_carry and not self._pickup(task, src, src_yaw, pickup_d):
                 return False
 
             # ── Step 3: Navigate to DROP staging point (in the aisle) ─
@@ -1056,8 +1162,9 @@ class MissionManagerNode(Node):
             self._current_task_step = "dropping"
             self._state = MissionState.DROPPING
             self._log("Dropping rack...")
-            self._lift_to(0.0)
-            time.sleep(self.p_drop_wait)
+            if not self._move_lift(0.0, self.p_drop_wait):
+                return False            # still "carrying": the rack is not down
+            task["phase"] = "dropped"
 
             # Mark drop location as OCCUPIED — there's a rack there now.
             if dst and dst.get("id"):
@@ -1076,11 +1183,91 @@ class MissionManagerNode(Node):
             # Always restore normal footprint + inflation, even on early
             # returns, and stop suppressing the target rack.
             self._docking_target_id = None
-            if self._carrying:
+            if self._carrying and task.get("phase") == "carrying":
+                # Paused, stopped or failed with the rack still lifted: keep the
+                # carrying footprint and the leg mask, the rack is on board.
+                self._log("Rack still on board: keeping the carrying footprint.")
+            elif self._carrying:
                 self._set_carrying_mode(False)
             else:
                 self._set_inflation(self.p_inflation_normal)
             self._publish_rack_obstacles()
+
+    def _pickup(self, task, src, src_yaw, pickup_d):
+        """Steps 1-2 of a transport: reach the rack, dock under it, lift it and
+        pull it out into the aisle. False if it failed or was cancelled; once
+        the rack is lifted task["phase"] is "carrying" either way."""
+        # ── Step 1: Navigate to PICKUP staging (aisle, outside legs) ─
+        # Staging sits fully outside the rack footprint (≈0.95 m behind
+        # centre) so the robot body doesn't overlap the near legs —
+        # otherwise the planner refuses to approach.  The leg-servo dock
+        # closes the remaining gap.
+        self._current_task_step = "navigating_to_rack"
+        self._state = MissionState.NAVIGATING
+        if src:
+            # Stop treating the rack we're about to drive UNDER as a
+            # lethal obstacle (its legs are still 'occupied').
+            self._docking_target_id = src.get("id")
+            self._publish_rack_obstacles()
+
+            stg_x, stg_y = self._staging_point(
+                src["x"], src["y"], src_yaw, pickup_d)
+
+            if not self._route_via_lanes(stg_x, stg_y, src_yaw,
+                                         label="to pickup"):
+                return False
+            if self._cancel_requested or self._paused:
+                return False
+
+            self._log(f"Navigating to pickup staging for "
+                      f"{task.get('from_name', 'rack')}...")
+            if not self._approach_site(stg_x, stg_y, src_yaw, label="to pickup staging"):
+                return False
+
+        if self._cancel_requested or self._paused:
+            return False
+
+        # ── Step 1b: Closed-loop leg-servo dock (in + centre + align)
+        if src:
+            self._current_task_step = "centering"
+            if not self._dock_servo(src["x"], src["y"], src_yaw,
+                                    label=task.get("from_name", "rack")):
+                self._log("ERROR: Docking failed — aborting task to "
+                          "avoid lifting without a rack underneath.")
+                return False
+
+        # ── Step 2: Lift ─────────────────────────────────────────
+        self._current_task_step = "lifting"
+        self._state = MissionState.LIFTING
+        self._log("Lifting rack...")
+        if not self._move_lift(self.p_lift_height, self.p_lift_wait):
+            # Nothing is tracked as carried: the rack may be part-way up. Lower it by hand.
+            self._log("Lift did not complete. The rack stays recorded at its place.")
+            return False
+
+        # Mark pickup location as FREE — the rack is no longer here.
+        if src and src.get("id"):
+            self._set_location_state(src["id"], "free")
+
+        # Carrying now: legs are lifted out of the lidar plane.  The
+        # carried rack is suppressed by _set_carrying_mode's logic.
+        self._docking_target_id = None
+        task["phase"] = "carrying"
+        self._set_carrying_mode(True)
+        time.sleep(self.p_settle_time)
+
+        # ── Step 2b: Extract straight back into the aisle ────────
+        # Pure straight reverse with lateral + yaw hold, closed-loop
+        # on odom, so the carried rack pulls out without swinging.
+        if src:
+            self._drive_straight_closed_loop(
+                -self.p_extract_clearance,
+                label="Extracting rack to aisle")
+            time.sleep(0.3)
+            self._clear_costmaps()
+            time.sleep(0.5)
+
+        return not (self._cancel_requested or self._paused)
 
     def _execute_navigate(self, task):
         """Simple point-to-point navigation."""
@@ -2528,10 +2715,57 @@ class MissionManagerNode(Node):
     # ─────────────────────────────────────────────────────────────────
     # State broadcasting
     # ─────────────────────────────────────────────────────────────────
+    def _publish_indicator(self):
+        """Stack light + buzzer request. The bridge adds "moving" whenever the
+        wheels are commanded and the controller shows a latched e-stop itself."""
+        msg = Indicator()
+        s = self._state
+        if s == MissionState.ERROR:
+            msg.light = Indicator.LIGHT_FAULT
+        elif s == MissionState.PAUSED or self._fleet_held():
+            msg.light = Indicator.LIGHT_PAUSED
+        elif s in (MissionState.LIFTING, MissionState.DROPPING):
+            msg.light = Indicator.LIGHT_MOVING
+            msg.buzzer = Indicator.BUZZER_FAST
+        elif s in (MissionState.RUNNING, MissionState.NAVIGATING, MissionState.RETURNING):
+            msg.light = Indicator.LIGHT_MOVING
+        else:
+            msg.light = Indicator.LIGHT_IDLE
+        self._indicator_pub.publish(msg)
+
+    def _hardware_state(self):
+        """E-stop controller and battery for the GUI; None on a robot without them (simulation)."""
+        now = time.time()
+        safety = battery = None
+        if self._safety is not None and now - self._safety_time < 1.5:
+            m = self._safety
+            safety = {"online": m.online, "active": m.estop_active, "cause": m.cause,
+                      "button": m.button_pressed, "power": m.hoverboard_power}
+        if self._board is not None and now - self._board_time < 1.5:
+            b = self._board
+            battery = {"online": b.online, "voltage": round(b.battery_voltage, 1),
+                       "percent": b.battery_percent, "low": b.battery_low,
+                       "error_left": b.error_left, "error_right": b.error_right}
+        return safety, battery
+
+    def _lift_state(self):
+        if self._lift is None or time.time() - self._lift_time >= 1.5:
+            return None
+        m = self._lift
+        return {"online": m.online, "state": m.state, "fault": m.fault, "homed": m.homed,
+                "height": round(m.position, 4), "at_target": m.at_target}
+
     def _publish_state(self):
         self._update_robot_pose()
+        self._publish_indicator()
+        safety, battery = self._hardware_state()
         state_data = {
             "state": self._state.value,
+            "error": self._error_kind if self._state == MissionState.ERROR else "",
+            "estop": self._estop_latched,
+            "safety": safety,
+            "battery": battery,
+            "lift": self._lift_state(),
             "robot_pose": self._robot_pose,
             "current_task": self._current_task,
             "current_step": self._current_task_step,
@@ -2569,12 +2803,11 @@ def main(args=None):
     node = MissionManagerNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

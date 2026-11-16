@@ -40,6 +40,18 @@ export class PreviewEngine {
       locations: loc,
       queue: [],
       lane_corner_radius: DEFAULT_RADIUS,
+      // Simulated body controller and drive board, so the hardware readouts show in preview.
+      get safety() {
+        const active = this.state === "ERROR" && this.error !== "task";
+        return { online: true, active, cause: active ? 1 : 0, button: false, power: !active };
+      },
+      get battery() {
+        return { online: this.state !== "ERROR", voltage: 38.6, percent: 64, low: false, error_left: 0, error_right: 0 };
+      },
+      get lift() {
+        const moving = this.state === "LIFTING" || this.state === "DROPPING";
+        return { online: true, state: moving ? 3 : 2, fault: 0, homed: true, height: this.carrying ? 0.05 : 0, at_target: !moving };
+      },
     };
     this.log = [];
     this.plan = [];

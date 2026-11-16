@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, memo } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, ArrowDown, RotateCcw, RotateCw, ChevronsUp, ChevronsDown, Check } from "lucide-react";
 import { Button, Slider, Kbd, Sun } from "./ui";
-import { stateMeta, taskSteps, taskTitle, taskKind } from "../lib/mission";
+import { missionMeta, taskSteps, taskTitle, taskKind } from "../lib/mission";
 import { fmt, rad2deg, num } from "../lib/geometry";
 import { cx } from "../lib/cx";
 
@@ -67,7 +67,7 @@ function Steps({ task, step }) {
 }
 
 function RobotPanel({ missionState, sendCommand, disabled, drive }) {
-  const meta = stateMeta(missionState.state);
+  const meta = missionMeta(missionState);
   const task = missionState.current_task;
   const pose = missionState.robot_pose;
   const [speed, setSpeed] = useState(num(missionState.speed, 0.4));

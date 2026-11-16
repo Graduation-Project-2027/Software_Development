@@ -6,21 +6,28 @@
 
 :root {
   --paper: #ffffff;
-  --ground: #f3f4f6;
-  --raised: #f7f8f9;
-  --active: #ecedf0;
-  --line: #e2e3e7;
-  --rule: #ecedf0;
-  --control: #c8cbd0;
-  --control-hover: #a9adb4;
-  --unknown: #e8e9ec;
+  --panel: #eceef1;          /* aluminium: the side panels */
+  --ground: #e3e6ea;
+  --raised: #f3f4f6;
+  --active: #dfe2e6;
+  --line: #cdd1d7;
+  --rule: #dcdfe4;
+  --control: #b3b8c0;
+  --control-hover: #8d939d;
+  --unknown: #dfe2e6;
 
-  --ink: #141416;
-  --ink-2: #2e3035;
-  --muted: #5c5f66;
-  --faint: #6b6e75;
+  --ink: #0f1114;
+  --ink-2: #2a2d33;
+  --muted: #4f545c;
+  --faint: #636972;
 
-  --red: #e3202a;
+  /* Safety colour code, shared with the robot's stack light and e-stop. */
+  --lamp-red: #ff3b42;
+  --lamp-amber: #ffb020;
+  --lamp-green: #2fd07a;
+  --estop-yellow: #f6c400;
+
+  --red: #e11d27;
   --red-press: #c41a22;
   --red-ink: #c4161f;
   --red-tint: #fdeced;
@@ -28,17 +35,18 @@
   --gold-ink: #8a5410;
   --gold-tint: #fbf1e3;
   --gold-line: #efd2ac;
-  --ok: #1f7a4d;
+  --ok: #17804a;
 
   --font: "Archivo Variable", Archivo, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
 
-  --r-panel: 6px;
-  --r-control: 6px;
-  --r-chip: 4px;
+  --r-panel: 3px;
+  --r-control: 3px;
+  --r-chip: 2px;
   --h-control: 32px;
   --h-control-sm: 28px;
-  --topbar: 56px;
+  --topbar: 52px;
+  --statusbar: 28px;
   --left: 340px;
   --right: 304px;
 
@@ -57,7 +65,6 @@
 /* ── Base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
-html { color-scheme: light; }
 html, body, #root { height: 100%; }
 @media (pointer: fine) { html { overscroll-behavior: none; } }
 html:has(.app[data-layout="narrow"]) { scroll-padding-top: 104px; }
@@ -305,7 +312,7 @@ strong { font-weight: 600; color: var(--ink); }
 .btn--inverse { background: var(--paper); color: var(--ink); }
 .btn--inverse:hover:not(:disabled) { background: var(--active); }
 .btn--ghost-inverse { background: transparent; color: var(--paper); }
-.btn--ghost-inverse:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.btn--ghost-inverse:hover:not(:disabled) { background: color-mix(in srgb, var(--paper) 14%, transparent); }
 .btn--ghost-inverse:focus-visible, .btn--inverse:focus-visible { outline-color: var(--paper); }
 
 /* ── Tooltip ───────────────────────────────────────────────────────── */
@@ -768,9 +775,9 @@ strong { font-weight: 600; color: var(--ink); }
 }
 .telemetry > div { padding: 10px 12px; min-width: 0; }
 .telemetry > div:nth-child(odd) { border-right: 1px solid var(--rule); }
-.telemetry > div:nth-child(-n + 2) { border-bottom: 1px solid var(--rule); }
+.telemetry > div:not(:nth-last-child(-n + 2)) { border-bottom: 1px solid var(--rule); }
 .telemetry dt { font-size: 13px; line-height: 16px; color: var(--muted); }
-.telemetry dd { margin: 2px 0 0; font-size: 15px; line-height: 22px; font-weight: 600; white-space: nowrap; }
+.telemetry dd { margin: 2px 0 0; font-size: 15px; line-height: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .telemetry dd small, .speed__value small { font-size: 12px; font-weight: 500; color: var(--muted); }
 
 .pad { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -795,7 +802,7 @@ strong { font-weight: 600; color: var(--ink); }
 }
 .pad__key:hover:not(:disabled) { background: var(--raised); border-color: var(--control-hover); }
 .pad__key.is-held { background: var(--ink); border-color: var(--ink); color: var(--paper); }
-.pad__key.is-held .kbd { background: transparent; color: var(--paper); border-color: rgba(255, 255, 255, 0.3); }
+.pad__key.is-held .kbd { background: transparent; color: var(--paper); border-color: color-mix(in srgb, var(--paper) 30%, transparent); }
 .pad__key:disabled { opacity: 0.42; cursor: not-allowed; }
 .lift { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
 .speed { margin-top: 16px; }
@@ -842,7 +849,7 @@ strong { font-weight: 600; color: var(--ink); }
   display: flex;
   align-items: center;
   padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.94);
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
   border: 1px solid var(--line);
   border-radius: var(--r-panel);
   font-size: 12px;
@@ -1088,10 +1095,10 @@ strong { font-weight: 600; color: var(--ink); }
 .toast__text { flex: 1; min-width: 0; }
 .toast__title { font-size: 13px; font-weight: 600; }
 .toast__body { font-size: 12px; line-height: 17px; color: #c9cacf; }
-.toast__action { height: 28px; padding: 0 10px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: var(--r-control); background: transparent; color: var(--paper); font-size: 13px; font-weight: 600; cursor: pointer; }
-.toast__action:hover { background: rgba(255, 255, 255, 0.12); }
+.toast__action { height: 28px; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--paper) 30%, transparent); border-radius: var(--r-control); background: transparent; color: var(--paper); font-size: 13px; font-weight: 600; cursor: pointer; }
+.toast__action:hover { background: color-mix(in srgb, var(--paper) 12%, transparent); }
 .toast__close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: var(--r-chip); background: transparent; color: #c9cacf; cursor: pointer; }
-.toast__close:hover { background: rgba(255, 255, 255, 0.12); color: var(--paper); }
+.toast__close:hover { background: color-mix(in srgb, var(--paper) 12%, transparent); color: var(--paper); }
 .toast :focus-visible { outline-color: var(--paper); }
 
 /* Overlays adapt to the map's own width, not the window's. */

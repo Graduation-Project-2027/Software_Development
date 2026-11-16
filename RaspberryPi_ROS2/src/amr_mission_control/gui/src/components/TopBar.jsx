@@ -1,8 +1,10 @@
 import { useState, memo } from "react";
 import { Play, Pause, Square, House, OctagonX, Server, ChevronRight, ChevronDown, FlaskConical, X, ShieldCheck, Boxes, Bot, Monitor } from "lucide-react";
 import { Button, Tip, ConfirmDialog, Sun, Menu, MenuTrigger, MenuContent, MenuItem, MenuLabel, MenuSeparator } from "./ui";
-import { stateMeta } from "../lib/mission";
+import { missionMeta, isTaskFault } from "../lib/mission";
 import { cx } from "../lib/cx";
+import { StackLamp } from "./StatusBar";
+import ThemeSwitch from "./ThemeSwitch";
 
 /** Fleet (the laptop's view of every robot) | one robot's console, with a
  *  picker for which robot when there is a fleet. */
@@ -122,7 +124,8 @@ function LinkStatus({ mode, status, url, onExitPreview }) {
 function TopBar({ missionState, mode, status, online, url, sendCommand, onExitPreview, compact, stack, stackMode, onOpenSystem, workspace, onWorkspace, consoleLabel, robots, currentHost, onPickRobot, fleetLink }) {
   const [releaseOpen, setReleaseOpen] = useState(false);
   const state = missionState.state;
-  const meta = stateMeta(state);
+  const meta = missionMeta(missionState);
+  const taskFault = isTaskFault(missionState);
   const usable = online;
   const mapping = stackMode === "mapping";
   const why = !usable ? "Connect to the robot first" : mapping ? "Mapping mode has no navigation" : undefined;
@@ -151,16 +154,19 @@ function TopBar({ missionState, mode, status, online, url, sendCommand, onExitPr
         <StackButton stack={stack} onOpen={onOpenSystem} />
         <FleetChip link={fleetLink} onOpen={() => onWorkspace?.("fleet")} />
       </div>
+      <ThemeSwitch />
 
       <div className={cx("topbar__state", `tone--${mapping && usable ? "live" : meta.tone}`)} aria-live="polite">
+        <StackLamp missionState={missionState} online={usable} />
         {(meta.tone === "live" || mapping) && usable ? <Sun live /> : <span className={cx("dot", `dot--${meta.tone}`)} />}
         <span>{!usable ? "No robot" : mapping && state === "IDLE" ? "Mapping" : meta.label}</span>
       </div>
 
       <div className="topbar__controls" role="group" aria-label="Mission">
         {faulted && (
-          <Button size="sm" variant="secondary" icon={ShieldCheck} className="release" aria-label="Release E-stop" onClick={() => setReleaseOpen(true)}>
-            <span className="hide-sm">Release E-stop</span>
+          <Button size="sm" variant="secondary" icon={ShieldCheck} className="release" aria-label={taskFault ? "Clear fault" : "Release E-stop"}
+            onClick={() => (taskFault ? sendCommand({ action: "estop_release" }) : setReleaseOpen(true))}>
+            <span className="hide-sm">{taskFault ? "Clear fault" : "Release E-stop"}</span>
           </Button>
         )}
         {controls.map((c) => (compact ? (

@@ -15,6 +15,7 @@ import LocationsPanel from "./components/LocationsPanel";
 import MapsPanel from "./components/MapsPanel";
 import RobotPanel from "./components/RobotPanel";
 import EventLog from "./components/EventLog";
+import StatusBar from "./components/StatusBar";
 import ConnectionNotice from "./components/ConnectionNotice";
 import SystemSheet from "./components/SystemSheet";
 import { MappingBar, MapEditorBar } from "./components/MapOverlays";
@@ -44,7 +45,7 @@ function Shell({ target, workspace, onWorkspace, consoleLabel, fleetPreview, rob
   const toast = useToast();
   const wide = useMediaQuery("(min-width: 1280px)");
   const medium = useMediaQuery("(min-width: 900px)");
-  const roomy = useMediaQuery("(min-width: 1440px)");
+  const roomy = useMediaQuery(fleetLink ? "(min-width: 1720px)" : "(min-width: 1440px)");
   const layout = wide ? "wide" : medium ? "medium" : "narrow";
   const disabled = !m.online;
   const mapping = m.stackMode === "mapping";
@@ -238,6 +239,7 @@ function Shell({ target, workspace, onWorkspace, consoleLabel, fleetPreview, rob
           )}
         </>
       )}
+      <StatusBar missionState={ms} online={m.online} status={m.status} mode={m.mode} url={m.url} stack={m.stack} />
       <SystemSheet open={systemOpen} onOpenChange={setSystemOpen} stack={m.stack} prefs={prefs} setPrefs={setPrefs} />
     </div>
   );

@@ -8,6 +8,12 @@ export const DEFAULT_STATE = {
   speed: 0.4,
   queue: [],
   locations: { dock: { x: 0, y: 0, yaw: 0, name: "Dock" }, racks: [], drop_zones: [], lanes: [] },
+  // Real robot only (null in simulation and preview):
+  error: "", // why the state is ERROR: "estop" | "task"
+  estop: false,
+  safety: null, // e-stop controller: { online, active, cause, button, power }
+  battery: null, // drive board: { online, voltage, percent, low, error_left, error_right }
+  lift: null, // lift controller: { online, state, fault, homed, height, at_target }
 };
 
 /** Merge a raw /mission_control/state payload over safe defaults. */
@@ -43,6 +49,29 @@ export const STATE_META = {
 
 export function stateMeta(state) {
   return STATE_META[state] || { label: state || "Unknown", tone: "idle", hint: "" };
+}
+
+/** SafetyStatus.cause of the e-stop controller, in the operator's words. */
+export const ESTOP_CAUSES = {
+  1: "Stopped from mission control",
+  2: "E-stop button on the robot",
+  3: "Controller lost the robot computer",
+};
+
+/** True when ERROR means a failed task, not an emergency stop. */
+export function isTaskFault(ms) {
+  return ms?.state === "ERROR" && ms.error === "task";
+}
+
+/** stateMeta, with ERROR told apart: failed task, pressed button, lost computer. */
+export function missionMeta(ms) {
+  const meta = stateMeta(ms?.state);
+  if (ms?.state !== "ERROR") return meta;
+  if (isTaskFault(ms)) return { label: "Task failed", tone: "fault", hint: "Check the event log, then clear the fault" };
+  const s = ms.safety;
+  if (s?.online && s.button) return { ...meta, hint: "The button on the robot is pressed. Twist it out, then release the E-stop here" };
+  if (s?.online && s.active && ESTOP_CAUSES[s.cause]) return { ...meta, hint: `${ESTOP_CAUSES[s.cause]}. Check the robot, then release the E-stop` };
+  return meta;
 }
 
 const TRANSPORT_STEPS = [

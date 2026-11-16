@@ -56,7 +56,6 @@ import base64
 import json
 import math
 import os
-import random
 import re
 import socket
 import struct
@@ -1373,7 +1372,7 @@ def _warnings():
                 la, lb = _robots[c["a"]].label, _robots[c["b"]].label
                 out.append({"tone": "fault", "robots": [c["a"], c["b"]],
                             "text": f"{la} and {lb} block each other. Drive one aside from its console, or stop one task."})
-        ids, machines_by_id, domains = {}, {}, {}
+        machines_by_id, domains = {}, {}
         for r in _robots.values():
             if r.info.get("id"):
                 machines_by_id.setdefault(r.info["id"].lower(), []).append(r)

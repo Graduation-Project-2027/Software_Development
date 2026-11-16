@@ -5,6 +5,7 @@ import { Button, IconButton, Segmented } from "../ui";
 import PanelTabs from "../PanelTabs";
 import EventLog from "../EventLog";
 import FleetTopBar from "./FleetTopBar";
+import { FleetStatusBar } from "../StatusBar";
 import Roster, { SetupDialog } from "./Roster";
 import RobotInspector from "./RobotInspector";
 import DispatchPanel from "./DispatchPanel";
@@ -531,6 +532,7 @@ export default function FleetShell({ fleet, workspace, onWorkspace, consoleLabel
           )}
         </>
       )}
+      <FleetStatusBar fleet={fleet} />
       <ProvisionSheet open={provOpen} onOpenChange={setProvOpen} fleet={fleet} jobId={jobId} onJob={setJobId} onSelect={select} />
       <SetupDialog robot={robots.find((r) => r.key === setupKey)} robots={robots} open={!!setupKey}
         onOpenChange={(o) => !o && setSetupKey(null)} fleet={fleet} />

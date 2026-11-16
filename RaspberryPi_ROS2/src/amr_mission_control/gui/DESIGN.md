@@ -1,31 +1,40 @@
 # Design — LEVERAGE Mission Control
 
-Mode: **Operate**. The tool disappears into the task; brand lives in precise details.
+Mode: **Operate**. The tool disappears into the task; it should feel like part of the machine.
 
 ## World
 
-A printed engineering floor plan in E-JUST colours. White paper, black ink, one red sun.
+A machine controller. The screen is built like the pendant of a machine tool: a graphite frame around a white working drawing, aluminium panels at the sides, and colour used only the way the robot itself uses it.
 
-- **Signature move — the robot is the emblem.** On the map the AMR is drawn as its true black chassis with the E-JUST red disc at its centre. The same red disc marks "what the robot is doing now" everywhere else (the active task row, the current mission step, the live state). Red is otherwise reserved for E-stop and errors.
-- **Occupancy is shape, not colour.** Occupied rack = solid ink square; free = hollow outline. Readable in greyscale, on a projector and for colour-blind viewers.
-- **Lanes are floor tape.** Lanes are drawn in E-JUST gold, like warehouse floor markings. Gold also means caution (paused, preview).
+- **The frame is graphite.** Top bar, event console and status strip are dark and surround the floor plan. The plan stays white paper with black ink, because that is what reads on a projector.
+- **The stack light is on screen.** The three lamps in the top bar are the robot's own red / amber / green tower light, lit by the same rules as the firmware (`StatusBar.jsx`, `lampState`). Look at the robot or at the screen and you see the same thing.
+- **The e-stop looks like the e-stop.** Red actuator on a yellow ground, as ISO 13850 has it on the machine. Nothing else on screen uses that yellow, and nothing may push the button off the bar.
+- **A status strip, as on every HMI.** Bottom edge: link, stack, e-stop chain, drive power, battery, lift, pose, clock. A small square pilot light in front of a label is green, amber or red. Hardware state lives here and nowhere else.
+- **Colour is the safety code.** Red is stop or fault. Amber is caution: paused, held, preview. Green is running normally. Everything else is ink on grey. The E-JUST red disc still marks the robot and the step it is on; gold is still lane tape.
+- **Occupancy is shape, not colour.** Occupied rack = solid ink square; free = hollow outline.
+- **Keys, not pills.** Controls have 3 px corners and a darker bottom edge, and they move down a pixel when pressed.
+- **Data sits in rows.** Properties are label left, value right, one rule per row (`.kv`). State is a filled tag in the safety colour, not a dot. Tabs are a strip with the active tab joined to its panel. Keys in the side panels carry words; icons are kept for icon-only keys.
+- **Day and night panels.** The selector in the top bar switches the whole screen (`lib/theme.js`, `data-theme` on the root, saved per browser, first visit follows the operating system). At night the frame is a step darker than the panels, and the floor plan and 3D floor are shown as a negative with the hue turned back, so red stays red and lane tape stays gold.
 
 ## Tokens
 
 | Role | Value |
 | --- | --- |
-| Paper (surface) | `#FFFFFF` |
-| Ground (rails, second neutral) | `#F3F4F6` |
-| Ink (text, primary buttons, occupied) | `#141416` |
-| Muted text | `#5C5F66` |
-| Line / rule / control | `#E2E3E7` / `#ECEDF0` / `#C8CBD0` |
-| Signal red (robot, E-stop) | `#EA232B`; text `#C4161F` |
-| Gold (lanes, caution) | `#DE9242`; text `#8A5410` |
-| Positive (connected, done) | `#1F7A4D` |
+| Paper (drawing, fields, plates) | `#FFFFFF` |
+| Panel (aluminium side panels) | `#ECEEF1` |
+| Ground / active / line | `#E3E6EA` / `#DFE2E6` / `#CDD1D7` |
+| Ink / muted | `#0F1114` / `#4F545C` |
+| Frame (dark scope): surface / ground / line / ink | `#181A1E` / `#111316` / `#2F3339` / `#F2F3F5` |
+| Lamp red / amber / green | `#FF3B42` / `#FFB020` / `#2FD07A` |
+| E-stop yellow | `#F6C400` |
+| Signal red (robot, danger buttons) | `#E11D27`; text `#C4161F` |
+| Gold (lanes) | `#DE9242`; text `#8A5410` |
 
-Type: **Archivo** (variable, self-hosted) for everything; the LEVERAGE wordmark uses its expanded width. Tabular figures on every number. Scale 11 / 12 / 13 / 14 / 16 / 20 px. Weights 400 / 500 / 600, 700 for the wordmark and state only.
+The frame is dark by re-scoping the same tokens on `.topbar`, `.sb` and `.log` (`styles/hmi.css`), so every component inside follows without a second set of rules.
 
-Radius: tight — 6 px panels, 6 px controls, 4 px chips. Edges are 1 px lines; shadows only on things that float (menus, tooltips, map overlays).
+Type: **Archivo** (variable, self-hosted) for everything, set slightly condensed (96 %) like a panel legend, numerals and small labels at 88 to 90 %. The LEVERAGE wordmark uses the expanded width. Tabular figures on every number. No all-caps labels. Scale 11 / 12 / 13 / 14 / 18 / 20 px.
+
+Radius: 3 px panels and controls, 2 px chips. Edges are 1 px lines; shadows only on things that float (menus, tooltips, map overlays).
 
 Spacing: 4 px base; one gap (12 px) inside panels, 16 px panel padding.
 
